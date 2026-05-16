@@ -26,16 +26,16 @@ cd possums
 npm install
 ```
 
-Create a KV namespace:
+Create a KV namespace and paste the id into `wrangler.toml`:
 
 ```sh
 npx wrangler kv namespace create POSSUMS_KV
 ```
 
-Wrangler prints an id. The id is referenced from `wrangler.toml` as `$POSSUMS_KV_ID`, so put it in a local `.env` (gitignored) or your shell:
-
-```sh
-echo 'POSSUMS_KV_ID=<paste the id here>' >> .env
+```toml
+[[kv_namespaces]]
+binding = "POSSUMS_KV"
+id = "<paste the id here>"
 ```
 
 Then deploy:
@@ -44,7 +44,7 @@ Then deploy:
 npx wrangler deploy
 ```
 
-Wrangler reads `.env` automatically and substitutes the id at deploy time.
+The id is not a credential — it's an account-scoped identifier, useless without your Cloudflare auth. Safe to commit.
 
 Open the URL Wrangler prints. You'll be sent to `/setup` — enter both parent names and pick a password. The wizard generates a session secret, hashes the password (PBKDF2-SHA256, 100k iters, random salt), writes everything to KV, and signs you in. No env vars or dashboard config required.
 

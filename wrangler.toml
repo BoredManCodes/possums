@@ -8,4 +8,4 @@ binding = "ASSETS"
 
 [[kv_namespaces]]
 binding = "POSSUMS_KV"
-id = "$POSSUMS_KV_ID"
+id = "acb2c99567ac4e00834b4915ad9bd33a"
