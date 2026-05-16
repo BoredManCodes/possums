@@ -24,6 +24,7 @@ html, body { margin: 0; padding: 0; }
   --bath:  #6fa8d6;  --bath-soft:  #d8e8f5;  --bath-ink:  #2a567f;
   --tummy: #e89260;  --tummy-soft: #fae0d0;  --tummy-ink: #964820;
   --milestone: #d4af3e; --milestone-soft: #f4e9c2; --milestone-ink: #76570c;
+  --spitup: #b89aa0; --spitup-soft: #ede0e3; --spitup-ink: #6e4651;
 
   --danger: #d64545;
   --ok: #6aa757;
@@ -399,6 +400,7 @@ label {
 .t-bath      { background: var(--bath-soft);      color: var(--bath-ink); }
 .t-tummy     { background: var(--tummy-soft);     color: var(--tummy-ink); }
 .t-milestone { background: var(--milestone-soft); color: var(--milestone-ink); }
+.t-spitup    { background: var(--spitup-soft);    color: var(--spitup-ink); }
 
 .stat--feed  { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--feed); }
 .stat--sleep { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--sleep); }

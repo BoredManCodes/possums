@@ -5,6 +5,7 @@ const SESSION_VALUE = 'ok';
 
 const FEED_KINDS = ['bottle', 'breast_l', 'breast_r', 'solid'];
 const NAPPY_KINDS = ['wet', 'dirty', 'both'];
+const SPITUP_KINDS = ['small', 'medium', 'large', 'projectile'];
 const WHO_VALUES = ['parent1', 'parent2'];
 
 const PARENTS_KEY = 'config:parents';
@@ -387,6 +388,17 @@ const simple = {
       return null;
     },
     build(b) { return { changed_at: b.changed_at, kind: b.kind, notes: b.notes ?? null }; },
+  },
+  spitups: {
+    key: 'spitups',
+    tf: 'happened_at',
+    validate(b) {
+      if (!isStr(b.happened_at, 10)) return 'happened_at required';
+      if (!SPITUP_KINDS.includes(b.kind)) return 'bad kind';
+      if (!isStrOrNull(b.notes, 500)) return 'bad notes';
+      return null;
+    },
+    build(b) { return { happened_at: b.happened_at, kind: b.kind, notes: b.notes ?? null }; },
   },
   meds: {
     key: 'meds',

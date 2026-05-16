@@ -124,6 +124,7 @@ const ICONS = {
   bath: `<svg viewBox="0 0 24 24"><path d="M3 11h18l-1.5 6a3 3 0 01-3 2.5H7.5a3 3 0 01-3-2.5L3 11zM6 11V6a2 2 0 014 0M9 6h2"/></svg>`,
   tummy: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>`,
   milestone: `<svg viewBox="0 0 24 24"><path d="M12 3l2.6 5.5 6 .9-4.3 4.2 1 6L12 16.7 6.7 19.6l1-6L3.4 9.4l6-.9L12 3z"/></svg>`,
+  spitup: `<svg viewBox="0 0 24 24"><path d="M5 7q7 6 14 0"/><path d="M9 13v4M12 13v6M15 13v4"/></svg>`,
 };
 
 const chipHtml = (kind) => {
@@ -141,13 +142,17 @@ const sheetTileHtml = (kind) => {
 
 /* ---------- activity registry ---------- */
 
-const KIND_LABELS = { wet: 'Wet', dirty: 'Dirty', both: 'Wet + Dirty' };
+const KIND_LABELS = {
+  wet: 'Wet', dirty: 'Dirty', both: 'Wet + Dirty',
+  small: 'Small', medium: 'Medium', large: 'Large', projectile: 'Projectile',
+};
 
 const ACT = {
   bottle:    { label: 'Bottle',      icon: 'bottle',    color: 'feed' },
   breast:    { label: 'Breast',      icon: 'breast',    color: 'feed' },
   solid:     { label: 'Solid',       icon: 'solid',     color: 'feed' },
   nappy:     { label: 'Nappy',       icon: 'nappy',     color: 'nappy' },
+  spitup:    { label: 'Spit-up',     icon: 'spitup',    color: 'spitup' },
   sleep:     { label: 'Sleep',       icon: 'sleep',     color: 'sleep' },
   pump:      { label: 'Pump',        icon: 'pump',      color: 'pump' },
   med:       { label: 'Medicine',    icon: 'med',       color: 'med' },
@@ -157,7 +162,7 @@ const ACT = {
   milestone: { label: 'Milestone',   icon: 'milestone', color: 'milestone' },
 };
 
-const SHEET_ORDER = ['bottle', 'breast', 'solid', 'sleep', 'nappy', 'pump', 'med', 'bath', 'tummy', 'growth', 'milestone'];
+const SHEET_ORDER = ['bottle', 'breast', 'solid', 'sleep', 'nappy', 'spitup', 'pump', 'med', 'bath', 'tummy', 'growth', 'milestone'];
 
 /* ---------- normalisers: API rows → unified events ---------- */
 
@@ -212,6 +217,10 @@ const SOURCES = [
     } },
   { ep: '/api/milestones', tf: 'reached_at', map: (m) => ({
       id: m.id, kind: 'milestone', ts: m.reached_at, title: m.title, ep: '/api/milestones', notes: m.notes, logged_by: m.logged_by,
+    }) },
+  { ep: '/api/spitups', tf: 'happened_at', map: (s) => ({
+      id: s.id, kind: 'spitup', ts: s.happened_at,
+      title: `${KIND_LABELS[s.kind] ?? s.kind} spit-up`, ep: '/api/spitups', notes: s.notes, logged_by: s.logged_by,
     }) },
 ];
 
@@ -585,6 +594,7 @@ views.history = async () => {
     { k: 'bath', label: 'Bath' },
     { k: 'tummy', label: 'Tummy' },
     { k: 'milestone', label: 'Milestone' },
+    { k: 'spitup', label: 'Spit-up' },
   ];
   let active = 'all';
 
@@ -1440,6 +1450,45 @@ forms.milestone = () => {
         notes: (fd.get('notes') || '').trim() || null,
       });
       onSaved(f, 'Milestone saved.');
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+forms.spitup = () => {
+  const f = formShell(`
+    <label>When
+      <input type="datetime-local" name="when" required value="${nowLocal()}">
+    </label>
+    <div>
+      <label style="margin-bottom:6px">Size</label>
+      <div class="seg" id="kind-seg" style="grid-template-columns: 1fr 1fr; grid-auto-flow: row;">
+        <button type="button" class="seg__btn is-on" data-kind="small">Small</button>
+        <button type="button" class="seg__btn" data-kind="medium">Medium</button>
+        <button type="button" class="seg__btn" data-kind="large">Large</button>
+        <button type="button" class="seg__btn" data-kind="projectile">Projectile</button>
+      </div>
+    </div>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" placeholder="optional">
+    </label>
+  `, {});
+  let kind = 'small';
+  f.querySelectorAll('.seg__btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      kind = b.dataset.kind;
+      f.querySelectorAll('.seg__btn').forEach((x) => x.classList.toggle('is-on', x === b));
+    })
+  );
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    try {
+      await api.post('/api/spitups', {
+        happened_at: `${fd.get('when')}:00`,
+        kind,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onSaved(f, 'Spit-up saved.');
     } catch (err) { onErr(f, err); }
   });
 };
