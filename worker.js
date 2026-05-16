@@ -361,6 +361,7 @@ const simple = {
       if (!isStr(b.started_at, 10)) return 'started_at required';
       if (b.kind !== undefined && !FEED_KINDS.includes(b.kind)) return 'bad kind';
       if (!isIntOrNull(b.amount_ml, 0, 2000)) return 'bad amount_ml';
+      if (!isIntOrNull(b.started_ml, 0, 2000)) return 'bad started_ml';
       if (!isIntOrNull(b.duration_seconds, 0, 36000)) return 'bad duration_seconds';
       if (!isStrOrNull(b.notes, 500)) return 'bad notes';
       return null;
@@ -370,6 +371,7 @@ const simple = {
         started_at: b.started_at,
         kind: b.kind ?? 'bottle',
         amount_ml: b.amount_ml ?? null,
+        started_ml: b.started_ml ?? null,
         duration_seconds: b.duration_seconds ?? null,
         notes: b.notes ?? null,
       };
@@ -612,6 +614,69 @@ async function handleTimed(name, request, url, env, idStr, sub) {
 
 const TIMED_PATHS = { naps: 'naps', pumps: 'pumps', 'tummy-times': 'tummy_times' };
 
+const BOTTLE_TIMER_KEY = 'bottle_timer';
+const readBottleTimer = async (env) => {
+  const raw = await env.POSSUMS_KV.get(BOTTLE_TIMER_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+};
+
+async function handleBottleTimer(request, env, action) {
+  if (!action) {
+    if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
+    return json(await readBottleTimer(env));
+  }
+  if (action === 'start' && request.method === 'POST') {
+    if (await readBottleTimer(env)) {
+      return json({ error: 'a bottle timer is already running' }, { status: 409 });
+    }
+    const b = (await readBody(request)) ?? {};
+    if (!isIntOrNull(b.started_ml, 0, 2000)) return badRequest('bad started_ml');
+    const started_at = isStr(b.started_at, 10) ? b.started_at : nowSec();
+    const row = {
+      started_at,
+      started_ml: b.started_ml ?? null,
+      logged_by: getWho(request),
+      created_at: nowSec(),
+    };
+    await env.POSSUMS_KV.put(BOTTLE_TIMER_KEY, JSON.stringify(row));
+    return json(row, { status: 201 });
+  }
+  if (action === 'end' && request.method === 'POST') {
+    const existing = await readBottleTimer(env);
+    if (!existing) return json({ error: 'no bottle timer running' }, { status: 409 });
+    const b = (await readBody(request)) ?? {};
+    if (!isIntOrNull(b.amount_ml, 0, 2000)) return badRequest('bad amount_ml');
+    if (!isStrOrNull(b.notes, 500)) return badRequest('bad notes');
+    const ended_at = nowSec();
+    const duration_seconds = Math.max(
+      0,
+      Math.floor((new Date(ended_at).getTime() - new Date(existing.started_at).getTime()) / 1000),
+    );
+    const feeds = await readList(env, 'feeds');
+    const row = {
+      id: nextId(feeds),
+      started_at: existing.started_at,
+      kind: 'bottle',
+      amount_ml: b.amount_ml ?? null,
+      started_ml: existing.started_ml ?? null,
+      duration_seconds,
+      notes: b.notes ?? null,
+      logged_by: getWho(request) ?? existing.logged_by ?? null,
+      created_at: nowSec(),
+    };
+    feeds.push(row);
+    await writeList(env, 'feeds', feeds);
+    await env.POSSUMS_KV.delete(BOTTLE_TIMER_KEY);
+    return json(row, { status: 201 });
+  }
+  if (action === 'cancel' && request.method === 'POST') {
+    await env.POSSUMS_KV.delete(BOTTLE_TIMER_KEY);
+    return new Response(null, { status: 204 });
+  }
+  return new Response('Method not allowed', { status: 405 });
+}
+
 async function handleParents(request, env) {
   if (request.method === 'GET') {
     return json(await readParents(env));
@@ -641,6 +706,7 @@ async function handleApi(request, url, env) {
   if (parts[1] === 'parents') return handleParents(request, env);
   if (parts[1] === 'me') return handleMe(request, env);
   if (parts[1] === 'auth' && parts[2] === 'password') return handleChangePassword(request, env);
+  if (parts[1] === 'bottle-timer') return handleBottleTimer(request, env, parts[2]);
   if (simple[parts[1]]) return handleSimple(parts[1], request, url, env, parts[2]);
   if (TIMED_PATHS[parts[1]]) return handleTimed(TIMED_PATHS[parts[1]], request, url, env, parts[2], parts[3]);
   return json({ error: 'not found' }, { status: 404 });

@@ -81,6 +81,7 @@ const api = {
       body: JSON.stringify(body),
     }).then(handleAuth).then(async (r) => {
       if (!r.ok) throw new Error((await r.text()) || `${r.status}`);
+      if (r.status === 204) return null;
       return r.json();
     }),
   put: (path, body) =>
@@ -90,6 +91,7 @@ const api = {
       body: JSON.stringify(body),
     }).then(handleAuth).then(async (r) => {
       if (!r.ok) throw new Error((await r.text()) || `${r.status}`);
+      if (r.status === 204) return null;
       return r.json();
     }),
   del: (path) =>
@@ -164,8 +166,11 @@ const SOURCES = [
       const isBreast = f.kind === 'breast_l' || f.kind === 'breast_r';
       const kind = isBreast ? 'breast' : (f.kind || 'bottle');
       let title;
-      if (kind === 'bottle') title = f.amount_ml ? `${f.amount_ml} ml bottle` : 'Bottle';
-      else if (kind === 'solid') title = f.amount_ml ? `${f.amount_ml} g solids` : 'Solids';
+      if (kind === 'bottle') {
+        if (f.amount_ml != null && f.started_ml != null) title = `${f.amount_ml}/${f.started_ml} ml bottle`;
+        else if (f.amount_ml != null) title = `${f.amount_ml} ml bottle`;
+        else title = 'Bottle';
+      } else if (kind === 'solid') title = f.amount_ml ? `${f.amount_ml} g solids` : 'Solids';
       else {
         const side = f.kind === 'breast_l' ? 'L' : 'R';
         const dur = f.duration_seconds ? ` · ${fmtDuration(f.duration_seconds * 1000)}` : '';
@@ -328,28 +333,56 @@ views.today = async () => {
   const stopTicker = () => { if (tickerId) { clearInterval(tickerId); tickerId = null; } };
   viewCleanup = stopTicker;
 
-  const renderLive = (nap) => {
+  const tick = (slot) => {
+    slot.querySelectorAll('[data-started-ms]').forEach((e) => {
+      e.textContent = fmtTimer(Date.now() - Number(e.dataset.startedMs));
+    });
+  };
+
+  const renderLive = (nap, bottleTimer) => {
     const slot = wrap.querySelector('#today-live');
     stopTicker();
-    if (!nap) { slot.replaceChildren(); return; }
-    const startedMs = new Date(nap.started_at).getTime();
-    const node = el(`
-      <div class="live live--sleep">
-        <div class="live__chip">${ICONS.sleep}</div>
-        <div class="live__label">Sleep in progress</div>
-        <div class="live__time" id="today-elapsed">${fmtTimer(Date.now() - startedMs)}</div>
-        <div class="live__sub">started ${fmtTime(nap.started_at)}</div>
-        <button class="btn" id="today-end-sleep">End sleep</button>
-      </div>
-    `);
-    slot.replaceChildren(node);
-    const elapsed = node.querySelector('#today-elapsed');
-    tickerId = setInterval(() => { elapsed.textContent = fmtTimer(Date.now() - startedMs); }, 1000);
-    node.querySelector('#today-end-sleep').addEventListener('click', async (ev) => {
-      ev.target.disabled = true;
-      await api.post(`/api/naps/${nap.id}/end`, {});
-      refresh();
-    });
+    const cards = [];
+
+    if (nap) {
+      const startedMs = new Date(nap.started_at).getTime();
+      const node = el(`
+        <div class="live live--sleep">
+          <div class="live__chip">${ICONS.sleep}</div>
+          <div class="live__label">Sleep in progress</div>
+          <div class="live__time" data-started-ms="${startedMs}">${fmtTimer(Date.now() - startedMs)}</div>
+          <div class="live__sub">started ${fmtTime(nap.started_at)}</div>
+          <button class="btn" id="today-end-sleep">End sleep</button>
+        </div>
+      `);
+      node.querySelector('#today-end-sleep').addEventListener('click', async (ev) => {
+        ev.target.disabled = true;
+        await api.post(`/api/naps/${nap.id}/end`, {});
+        refresh();
+      });
+      cards.push(node);
+    }
+
+    if (bottleTimer) {
+      const startedMs = new Date(bottleTimer.started_at).getTime();
+      const offered = bottleTimer.started_ml != null ? `${bottleTimer.started_ml} ml offered · ` : '';
+      const node = el(`
+        <div class="live live--feed">
+          <div class="live__chip">${ICONS.bottle}</div>
+          <div class="live__label">Bottle in progress</div>
+          <div class="live__time" data-started-ms="${startedMs}">${fmtTimer(Date.now() - startedMs)}</div>
+          <div class="live__sub">${offered}started ${fmtTime(bottleTimer.started_at)}</div>
+          <button class="btn" id="today-manage-bottle">End bottle</button>
+        </div>
+      `);
+      node.querySelector('#today-manage-bottle').addEventListener('click', () => showForm('bottle'));
+      cards.push(node);
+    }
+
+    slot.replaceChildren(...cards);
+    if (cards.length > 0) {
+      tickerId = setInterval(() => tick(slot), 1000);
+    }
   };
 
   const statTile = (label, valueHtml, subHtml, kind, tab) => {
@@ -367,15 +400,16 @@ views.today = async () => {
   };
 
   const refresh = async () => {
-    const [feeds, nappies, naps, currentNap, allEvents] = await Promise.all([
+    const [feeds, nappies, naps, currentNap, bottleTimer, allEvents] = await Promise.all([
       api.list('/api/feeds?limit=1'),
       api.list('/api/nappies?limit=1'),
       api.list('/api/naps?limit=1'),
       api.list('/api/naps/current'),
+      api.list('/api/bottle-timer'),
       fetchUnified(80),
     ]);
 
-    renderLive(currentNap);
+    renderLive(currentNap, bottleTimer);
 
     const stats = wrap.querySelector('#today-stats');
     const lastFeed = feeds[0];
@@ -727,30 +761,251 @@ const onErr = (form, err) => {
 const forms = {};
 
 forms.bottle = () => {
-  const f = formShell(`
-    <label>When
-      <input type="datetime-local" name="when" required value="${nowLocal()}">
-    </label>
-    <label>Amount (ml)
-      <input type="number" name="amount_ml" inputmode="numeric" min="0" max="2000" step="5" placeholder="e.g. 120">
-    </label>
-    <label>Notes
-      <input type="text" name="notes" maxlength="500" placeholder="optional">
-    </label>
-  `, {});
-  f.addEventListener('submit', async (e) => {
+  app.replaceChildren(el(`<div class="stack" id="bottle-wrap">
+    <div id="bottle-live"></div>
+    <details class="advanced">
+      <summary>Log past bottle</summary>
+      <form class="stack" id="bottle-past-form">
+        <label>When
+          <input type="datetime-local" name="when" required value="${nowLocal()}">
+        </label>
+        <div class="grid-2">
+          <label>Offered (ml)
+            <input type="number" name="started_ml" inputmode="numeric" min="0" max="2000" step="5" placeholder="optional">
+          </label>
+          <label>Drank (ml)
+            <input type="number" name="amount_ml" inputmode="numeric" min="0" max="2000" step="5" placeholder="e.g. 120">
+          </label>
+        </div>
+        <label>Notes
+          <input type="text" name="notes" maxlength="500" placeholder="optional">
+        </label>
+        <button type="submit" class="btn btn--ghost">Save past bottle</button>
+        <p class="form-msg" hidden></p>
+      </form>
+    </details>
+  </div>`));
+
+  const wrap = document.getElementById('bottle-wrap');
+  const liveSlot = wrap.querySelector('#bottle-live');
+  let tickerId = null;
+  const stopTicker = () => { if (tickerId) { clearInterval(tickerId); tickerId = null; } };
+  viewCleanup = stopTicker;
+
+  const renderStart = () => {
+    stopTicker();
+    const node = el(`
+      <div class="live live--feed">
+        <div class="live__chip">${ICONS.bottle}</div>
+        <div class="live__label">Start a bottle</div>
+        <div class="live__time" style="font-size:1.6rem">Tap to start</div>
+        <label style="width:100%;max-width:280px;margin-bottom:6px">Offered (ml)
+          <input type="number" id="start-ml" inputmode="numeric" min="0" max="2000" step="5" placeholder="e.g. 150">
+        </label>
+        <div class="live__sub">timer runs until you end it</div>
+        <button class="btn" id="start-bottle">Start bottle</button>
+        <p class="form-msg" hidden></p>
+      </div>
+    `);
+    liveSlot.replaceChildren(node);
+    const msg = node.querySelector('.form-msg');
+    const startInput = node.querySelector('#start-ml');
+    startInput.focus();
+    node.querySelector('#start-bottle').addEventListener('click', async (e) => {
+      const ml = startInput.value;
+      if (!ml || Number(ml) <= 0) {
+        msg.classList.add('form-msg--err');
+        msg.textContent = 'Enter how much you poured (ml) — needed to compute what was drunk.';
+        msg.hidden = false;
+        startInput.focus();
+        return;
+      }
+      e.target.disabled = true;
+      try {
+        await api.post('/api/bottle-timer/start', {
+          started_at: nowLocalISO(),
+          started_ml: Number(ml),
+        });
+        refresh();
+      } catch (err) {
+        msg.classList.add('form-msg--err');
+        msg.textContent = `Failed: ${err.message}`;
+        msg.hidden = false;
+        e.target.disabled = false;
+      }
+    });
+  };
+
+  const renderRunning = (current) => {
+    stopTicker();
+    const startedMs = new Date(current.started_at).getTime();
+    const offered = current.started_ml;
+    const offeredText = offered != null ? `${offered} ml offered · ` : '';
+    const node = el(`
+      <div class="live live--feed">
+        <div class="live__chip">${ICONS.bottle}</div>
+        <div class="live__label">Bottle in progress</div>
+        <div class="live__time" id="bottle-elapsed">${fmtTimer(Date.now() - startedMs)}</div>
+        <div class="live__sub">${offeredText}started ${fmtTime(current.started_at)}</div>
+
+        <div class="seg" id="bottle-end-mode" style="width:100%;max-width:320px;margin-top:4px">
+          <button type="button" class="seg__btn ${offered != null ? 'is-on' : ''}" data-mode="all"${offered == null ? ' disabled style="opacity:0.4;cursor:not-allowed"' : ''}>Drank all</button>
+          <button type="button" class="seg__btn ${offered == null ? 'is-on' : ''}" data-mode="remaining">Remaining</button>
+          <button type="button" class="seg__btn" data-mode="weighed">Weighed</button>
+        </div>
+
+        <div id="bottle-end-inputs" style="width:100%;max-width:280px;margin-top:8px"></div>
+
+        <div class="live__sub" id="bottle-end-preview" style="margin-top:6px;font-weight:600;color:var(--feed-ink)"></div>
+
+        <button class="btn" id="end-bottle">End bottle</button>
+        <button class="btn btn--ghost" id="cancel-bottle" style="margin-top:6px">Cancel timer</button>
+        <p class="form-msg" hidden></p>
+      </div>
+    `);
+    liveSlot.replaceChildren(node);
+
+    const elapsed = node.querySelector('#bottle-elapsed');
+    tickerId = setInterval(() => { elapsed.textContent = fmtTimer(Date.now() - startedMs); }, 1000);
+
+    let mode = offered != null ? 'all' : 'remaining';
+    const inputsDiv = node.querySelector('#bottle-end-inputs');
+    const preview = node.querySelector('#bottle-end-preview');
+    const msg = node.querySelector('.form-msg');
+
+    const computeDrank = () => {
+      if (mode === 'all') return offered != null ? offered : null;
+      if (mode === 'remaining') {
+        const v = inputsDiv.querySelector('#rem-ml')?.value;
+        if (v === '' || v == null) return null;
+        const rem = Number(v);
+        if (!Number.isFinite(rem) || rem < 0) return null;
+        if (offered == null) return null;
+        return Math.max(0, offered - Math.round(rem));
+      }
+      if (mode === 'weighed') {
+        const w = inputsDiv.querySelector('#weighed-g')?.value;
+        const b = inputsDiv.querySelector('#bottle-g')?.value;
+        if (w === '' || w == null) return null;
+        const wg = Number(w);
+        const bg = b === '' || b == null ? 0 : Number(b);
+        if (!Number.isFinite(wg) || !Number.isFinite(bg)) return null;
+        const rem = Math.max(0, wg - bg);
+        if (offered == null) return null;
+        return Math.max(0, Math.round(offered - rem));
+      }
+      return null;
+    };
+
+    const updatePreview = () => {
+      const d = computeDrank();
+      if (d == null) { preview.textContent = ''; return; }
+      if (mode === 'weighed') {
+        const wg = Number(inputsDiv.querySelector('#weighed-g')?.value || 0);
+        const bg = Number(inputsDiv.querySelector('#bottle-g')?.value || 0);
+        const rem = Math.max(0, wg - bg);
+        preview.textContent = `→ ${rem.toFixed(0)} g (${rem.toFixed(0)} ml) left · drank ${d} ml`;
+      } else {
+        preview.textContent = `→ drank ${d} ml`;
+      }
+    };
+
+    const renderInputs = () => {
+      if (mode === 'all') {
+        inputsDiv.replaceChildren();
+        preview.textContent = offered != null ? `→ drank ${offered} ml` : '';
+      } else if (mode === 'remaining') {
+        inputsDiv.replaceChildren(el(`
+          <label>Remaining (ml)
+            <input type="number" id="rem-ml" inputmode="numeric" min="0" max="2000" step="1" placeholder="${offered != null ? `0–${offered}` : 'ml left in bottle'}">
+          </label>
+        `));
+        inputsDiv.querySelector('#rem-ml').addEventListener('input', updatePreview);
+        updatePreview();
+      } else if (mode === 'weighed') {
+        inputsDiv.replaceChildren(el(`
+          <div class="grid-2">
+            <label>Weighed (g)
+              <input type="number" id="weighed-g" inputmode="decimal" min="0" max="3000" step="0.1" placeholder="bottle + milk">
+            </label>
+            <label>Empty bottle (g)
+              <input type="number" id="bottle-g" inputmode="decimal" min="0" max="500" step="0.1" value="29">
+            </label>
+          </div>
+        `));
+        inputsDiv.querySelector('#weighed-g').addEventListener('input', updatePreview);
+        inputsDiv.querySelector('#bottle-g').addEventListener('input', updatePreview);
+        updatePreview();
+      }
+    };
+
+    node.querySelector('#bottle-end-mode').addEventListener('click', (e) => {
+      const btn = e.target.closest('.seg__btn');
+      if (!btn || btn.disabled) return;
+      mode = btn.dataset.mode;
+      node.querySelectorAll('#bottle-end-mode .seg__btn').forEach((x) => x.classList.toggle('is-on', x === btn));
+      renderInputs();
+    });
+
+    node.querySelector('#end-bottle').addEventListener('click', async (e) => {
+      const drank = computeDrank();
+      if (drank == null) {
+        msg.classList.add('form-msg--err');
+        msg.textContent = offered == null
+          ? 'Offered amount unknown — enter remaining or weighed (or use "Log past bottle").'
+          : (mode === 'remaining' ? 'Enter remaining ml.' : 'Enter weighed grams.');
+        msg.hidden = false;
+        return;
+      }
+      e.target.disabled = true;
+      try {
+        await api.post('/api/bottle-timer/end', { amount_ml: drank });
+        showTab('today');
+      } catch (err) {
+        msg.classList.add('form-msg--err');
+        msg.textContent = `Failed: ${err.message}`;
+        msg.hidden = false;
+        e.target.disabled = false;
+      }
+    });
+
+    node.querySelector('#cancel-bottle').addEventListener('click', async (e) => {
+      if (!confirm('Cancel this bottle timer? Nothing will be saved.')) return;
+      e.target.disabled = true;
+      try { await api.post('/api/bottle-timer/cancel', {}); refresh(); }
+      catch (err) { e.target.disabled = false; }
+    });
+
+    renderInputs();
+  };
+
+  const refresh = async () => {
+    const current = await api.list('/api/bottle-timer');
+    if (current) renderRunning(current);
+    else renderStart();
+  };
+
+  wrap.querySelector('#bottle-past-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const fd = new FormData(f);
+    const fd = new FormData(e.target);
+    const msgEl = e.target.querySelector('.form-msg');
     try {
       await api.post('/api/feeds', {
         started_at: `${fd.get('when')}:00`,
         kind: 'bottle',
         amount_ml: fd.get('amount_ml') ? Number(fd.get('amount_ml')) : null,
+        started_ml: fd.get('started_ml') ? Number(fd.get('started_ml')) : null,
         notes: (fd.get('notes') || '').trim() || null,
       });
-      onSaved(f, 'Bottle saved.');
-    } catch (err) { onErr(f, err); }
+      showTab('today');
+    } catch (err) {
+      msgEl.classList.add('form-msg--err');
+      msgEl.textContent = `Failed: ${err.message}`;
+      msgEl.hidden = false;
+    }
   });
+
+  refresh();
 };
 
 forms.breast = () => {

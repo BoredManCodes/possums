@@ -417,6 +417,7 @@ label {
 }
 .live--pump  { background: var(--pump-soft); }
 .live--tummy { background: var(--tummy-soft); }
+.live--feed  { background: var(--feed-soft); }
 .live__chip {
   width: 44px;
   height: 44px;
@@ -430,6 +431,7 @@ label {
 .live--sleep .live__chip { color: var(--sleep-ink); }
 .live--pump  .live__chip { color: var(--pump-ink); }
 .live--tummy .live__chip { color: var(--tummy-ink); }
+.live--feed  .live__chip { color: var(--feed-ink); }
 .live__label {
   font-size: 0.7rem;
   letter-spacing: 0.14em;
@@ -439,6 +441,7 @@ label {
 .live--sleep .live__label { color: var(--sleep-ink); }
 .live--pump  .live__label { color: var(--pump-ink); }
 .live--tummy .live__label { color: var(--tummy-ink); }
+.live--feed  .live__label { color: var(--feed-ink); }
 .live__time {
   font-size: 3rem;
   font-weight: 700;
