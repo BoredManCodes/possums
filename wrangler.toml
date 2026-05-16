@@ -9,6 +9,3 @@ binding = "ASSETS"
 [[kv_namespaces]]
 binding = "POSSUMS_KV"
 id = "75431ab7f9b14976bea6e40776f4e081"
-
-[vars]
-SESSION_SECRET = "change-me-set-via-wrangler-secret"
