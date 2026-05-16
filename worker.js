@@ -8,7 +8,10 @@ const NAPPY_KINDS = ['wet', 'dirty', 'both'];
 const WHO_VALUES = ['parent1', 'parent2'];
 
 const PARENTS_KEY = 'config:parents';
+const AUTH_KEY = 'config:auth';
+const SECRET_KEY = 'config:session_secret';
 const DEFAULT_PARENTS = { parent1: 'Parent 1', parent2: 'Parent 2' };
+const PBKDF2_ITERS = 100000;
 
 const readParents = async (env) => {
   const raw = await env.POSSUMS_KV.get(PARENTS_KEY);
@@ -32,6 +35,51 @@ const getWho = (request) => {
 };
 
 const enc = new TextEncoder();
+
+const randomHex = (n) =>
+  [...crypto.getRandomValues(new Uint8Array(n))].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+const hexToBytes = (hex) => new Uint8Array(hex.match(/.{1,2}/g)?.map((h) => parseInt(h, 16)) ?? []);
+
+async function pbkdf2Hex(password, saltHex) {
+  const baseKey = await crypto.subtle.importKey(
+    'raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveBits']
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: hexToBytes(saltHex), iterations: PBKDF2_ITERS },
+    baseKey, 256
+  );
+  return [...new Uint8Array(bits)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const readAuthKV = async (env) => {
+  const raw = await env.POSSUMS_KV.get(AUTH_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+};
+
+const isSetupNeeded = async (env) => {
+  if (await env.POSSUMS_KV.get(AUTH_KEY)) return false;
+  return !env.PASSWORD;
+};
+
+const checkPassword = async (env, password) => {
+  if (typeof password !== 'string' || !password) return false;
+  const kvAuth = await readAuthKV(env);
+  if (kvAuth?.salt && kvAuth?.hash) {
+    const candidate = await pbkdf2Hex(password, kvAuth.salt);
+    if (candidate.length !== kvAuth.hash.length) return false;
+    let diff = 0;
+    for (let i = 0; i < candidate.length; i++) diff |= candidate.charCodeAt(i) ^ kvAuth.hash.charCodeAt(i);
+    return diff === 0;
+  }
+  return env.PASSWORD ? password === env.PASSWORD : false;
+};
+
+const getSessionSecret = async (env) => {
+  const kvSecret = await env.POSSUMS_KV.get(SECRET_KEY);
+  return kvSecret ?? env.SESSION_SECRET ?? '';
+};
 
 async function hmacHex(secret, data) {
   const key = await crypto.subtle.importKey(
@@ -71,7 +119,9 @@ function getCookie(request, name) {
 }
 
 async function isAuthed(request, env) {
-  return verifySession(env.SESSION_SECRET, getCookie(request, COOKIE_NAME));
+  const secret = await getSessionSecret(env);
+  if (!secret) return false;
+  return verifySession(secret, getCookie(request, COOKIE_NAME));
 }
 
 function json(body, init = {}) {
@@ -131,16 +181,17 @@ function cookieFlags(url) {
 async function handleLogin(request, env, url) {
   const form = await request.formData();
   const typedName = String(form.get('name') ?? '').trim();
-  const typedPwd = form.get('password');
+  const typedPwd = String(form.get('password') ?? '');
   const parents = await readParents(env);
   const norm = (s) => s.trim().toLowerCase();
   let who = null;
   if (typedName && norm(parents.parent1) === norm(typedName)) who = 'parent1';
   else if (typedName && norm(parents.parent2) === norm(typedName)) who = 'parent2';
   if (!who) return loginPage('Name not recognised.', typedName);
-  if (!env.PASSWORD || typedPwd !== env.PASSWORD) return loginPage('Wrong password.', typedName);
+  if (!(await checkPassword(env, typedPwd))) return loginPage('Wrong password.', typedName);
 
-  const token = await signSession(env.SESSION_SECRET);
+  const secret = await getSessionSecret(env);
+  const token = await signSession(secret);
   const flags = cookieFlags(url);
   const headers = new Headers({ Location: '/' });
   headers.append('Set-Cookie', `${COOKIE_NAME}=${token}; Max-Age=${COOKIE_MAX_AGE}; ${flags}`);
@@ -154,6 +205,113 @@ function logoutResponse(url) {
   headers.append('Set-Cookie', `${COOKIE_NAME}=; Max-Age=0; ${flags}`);
   headers.append('Set-Cookie', `${WHO_COOKIE}=; Max-Age=0; ${flags}`);
   return new Response(null, { status: 302, headers });
+}
+
+const renderSetupHtml = (err = '', vals = {}) => `<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#fbf7f0">
+  <title>Possums – Setup</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    body { background: #fbf7f0; }
+    .setup { min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
+    .setup__card { width: 100%; max-width: 380px; display: grid; gap: 16px; }
+    .setup__title { text-align: center; font-size: 32px; margin: 0; font-weight: 600; }
+    .setup__intro { text-align: center; color: #6b6258; margin: 0; }
+    .setup__form { display: grid; gap: 12px; }
+    .setup__form label { display: grid; gap: 6px; font-size: 14px; color: #6b6258; }
+    .setup__input { font: inherit; padding: 14px 16px; border: 1px solid #d8cfbf; border-radius: 14px; background: #fff; }
+    .setup__btn { font: inherit; padding: 14px; border-radius: 14px; border: 0; background: #2c2620; color: #fff; font-weight: 600; cursor: pointer; }
+    .setup__err { color: #b3261e; font-size: 14px; text-align: center; min-height: 1em; margin: 0; }
+    .setup__hint { font-size: 12px; color: #8a8275; margin: 0; }
+  </style>
+</head>
+<body>
+  <main class="setup">
+    <div class="setup__card">
+      <h1 class="setup__title">Welcome to Possums</h1>
+      <p class="setup__intro">Set up your tracker in one go. You'll sign in with a parent name + the password you choose here.</p>
+      <form class="setup__form" method="post" action="/setup">
+        <label>Parent 1 name
+          <input class="setup__input" type="text" name="parent1" required maxlength="60" autocapitalize="words" value="${escapeAttr(vals.parent1 ?? '')}">
+        </label>
+        <label>Parent 2 name
+          <input class="setup__input" type="text" name="parent2" required maxlength="60" autocapitalize="words" value="${escapeAttr(vals.parent2 ?? '')}">
+        </label>
+        <label>Shared password
+          <input class="setup__input" type="password" name="password" required minlength="6" autocomplete="new-password">
+        </label>
+        <label>Confirm password
+          <input class="setup__input" type="password" name="password2" required minlength="6" autocomplete="new-password">
+        </label>
+        <p class="setup__hint">Both parents share this password. Sign in by typing your name + the password.</p>
+        <button class="setup__btn" type="submit">Finish setup</button>
+        <p class="setup__err">${escapeAttr(err)}</p>
+      </form>
+    </div>
+  </main>
+</body>
+</html>`;
+
+function setupPage(err = '', vals = {}) {
+  return new Response(renderSetupHtml(err, vals), {
+    headers: { 'content-type': 'text/html; charset=utf-8' },
+  });
+}
+
+async function handleSetup(request, env, url) {
+  if (!(await isSetupNeeded(env))) {
+    return new Response(null, { status: 302, headers: { Location: '/login' } });
+  }
+  if (request.method === 'GET') return setupPage();
+  if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+
+  const form = await request.formData();
+  const parent1 = String(form.get('parent1') ?? '').trim();
+  const parent2 = String(form.get('parent2') ?? '').trim();
+  const password = String(form.get('password') ?? '');
+  const password2 = String(form.get('password2') ?? '');
+  const vals = { parent1, parent2 };
+
+  if (!parent1 || !parent2) return setupPage('Both parent names are required.', vals);
+  if (parent1.length > 60 || parent2.length > 60) return setupPage('Names must be 60 characters or fewer.', vals);
+  if (parent1.trim().toLowerCase() === parent2.trim().toLowerCase()) {
+    return setupPage('Parent names must be different.', vals);
+  }
+  if (password.length < 6) return setupPage('Password must be at least 6 characters.', vals);
+  if (password !== password2) return setupPage('Passwords do not match.', vals);
+
+  const salt = randomHex(16);
+  const hash = await pbkdf2Hex(password, salt);
+  const secret = randomHex(32);
+
+  await env.POSSUMS_KV.put(PARENTS_KEY, JSON.stringify({ parent1, parent2 }));
+  await env.POSSUMS_KV.put(AUTH_KEY, JSON.stringify({ salt, hash, iters: PBKDF2_ITERS, alg: 'pbkdf2-sha256' }));
+  await env.POSSUMS_KV.put(SECRET_KEY, secret);
+
+  const token = await signSession(secret);
+  const flags = cookieFlags(url);
+  const headers = new Headers({ Location: '/' });
+  headers.append('Set-Cookie', `${COOKIE_NAME}=${token}; Max-Age=${COOKIE_MAX_AGE}; ${flags}`);
+  headers.append('Set-Cookie', `${WHO_COOKIE}=parent1; Max-Age=${COOKIE_MAX_AGE}; ${flags}`);
+  return new Response(null, { status: 302, headers });
+}
+
+async function handleChangePassword(request, env) {
+  if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  const b = await readBody(request);
+  if (!b) return badRequest('json required');
+  const current = String(b.current ?? '');
+  const next = String(b.next ?? '');
+  if (next.length < 6) return badRequest('new password must be at least 6 characters');
+  if (!(await checkPassword(env, current))) return json({ error: 'current password is wrong' }, { status: 401 });
+  const salt = randomHex(16);
+  const hash = await pbkdf2Hex(next, salt);
+  await env.POSSUMS_KV.put(AUTH_KEY, JSON.stringify({ salt, hash, iters: PBKDF2_ITERS, alg: 'pbkdf2-sha256' }));
+  return json({ ok: true });
 }
 
 /* ---------- data layer ---------- */
@@ -480,6 +638,7 @@ async function handleApi(request, url, env) {
   if (parts[1] === 'health') return json({ ok: true, db: 'kv' });
   if (parts[1] === 'parents') return handleParents(request, env);
   if (parts[1] === 'me') return handleMe(request, env);
+  if (parts[1] === 'auth' && parts[2] === 'password') return handleChangePassword(request, env);
   if (simple[parts[1]]) return handleSimple(parts[1], request, url, env, parts[2]);
   if (TIMED_PATHS[parts[1]]) return handleTimed(TIMED_PATHS[parts[1]], request, url, env, parts[2], parts[3]);
   return json({ error: 'not found' }, { status: 404 });
@@ -488,6 +647,18 @@ async function handleApi(request, url, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    if (url.pathname === '/setup') return handleSetup(request, env, url);
+
+    if (await isSetupNeeded(env)) {
+      if (url.pathname.startsWith('/api/')) {
+        return json({ error: 'setup required', setup: true }, { status: 401 });
+      }
+      if (url.pathname === '/styles.css' || url.pathname === '/favicon.ico') {
+        return env.ASSETS.fetch(request);
+      }
+      return new Response(null, { status: 302, headers: { Location: '/setup' } });
+    }
 
     if (url.pathname === '/login') {
       if (request.method === 'POST') return handleLogin(request, env, url);

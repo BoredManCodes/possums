@@ -622,6 +622,20 @@ views.more = async () => {
       <button type="submit" class="btn">Save names</button>
       <p class="form-msg" hidden></p>
     </form>
+    <form class="card stack" id="password-form">
+      <h2 class="card__title">Change password</h2>
+      <label>Current password
+        <input type="password" name="current" required autocomplete="current-password">
+      </label>
+      <label>New password (min 6 chars)
+        <input type="password" name="next" required minlength="6" autocomplete="new-password">
+      </label>
+      <label>Confirm new password
+        <input type="password" name="next2" required minlength="6" autocomplete="new-password">
+      </label>
+      <button type="submit" class="btn">Update password</button>
+      <p class="form-msg" hidden></p>
+    </form>
     <div class="card stack">
       <h2 class="card__title">Activity types</h2>
       <div class="quick-grid" id="more-types"></div>
@@ -655,6 +669,31 @@ views.more = async () => {
       msg.classList.add('form-msg--err');
       msg.textContent = String(err.message || err);
       msg.hidden = false;
+    }
+  });
+
+  const pwForm = wrap.querySelector('#password-form');
+  pwForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(pwForm);
+    const msg = pwForm.querySelector('.form-msg');
+    const current = (fd.get('current') || '').toString();
+    const next = (fd.get('next') || '').toString();
+    const next2 = (fd.get('next2') || '').toString();
+    msg.hidden = false;
+    if (next !== next2) {
+      msg.classList.add('form-msg--err');
+      msg.textContent = 'New passwords do not match.';
+      return;
+    }
+    try {
+      await api.post('/api/auth/password', { current, next });
+      pwForm.reset();
+      msg.classList.remove('form-msg--err');
+      msg.textContent = 'Password updated.';
+    } catch (err) {
+      msg.classList.add('form-msg--err');
+      msg.textContent = String(err.message || err);
     }
   });
 };
