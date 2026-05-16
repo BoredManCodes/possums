@@ -26,18 +26,16 @@ cd possums
 npm install
 ```
 
-Create a KV namespace and copy the id into `wrangler.toml`:
+Create a KV namespace:
 
 ```sh
 npx wrangler kv namespace create POSSUMS_KV
 ```
 
-Edit `wrangler.toml`:
+Wrangler prints an id. The id is referenced from `wrangler.toml` as `$POSSUMS_KV_ID`, so put it in a local `.env` (gitignored) or your shell:
 
-```toml
-[[kv_namespaces]]
-binding = "POSSUMS_KV"
-id = "<paste the id here>"
+```sh
+echo 'POSSUMS_KV_ID=<paste the id here>' >> .env
 ```
 
 Then deploy:
@@ -45,6 +43,8 @@ Then deploy:
 ```sh
 npx wrangler deploy
 ```
+
+Wrangler reads `.env` automatically and substitutes the id at deploy time.
 
 Open the URL Wrangler prints. You'll be sent to `/setup` — enter both parent names and pick a password. The wizard generates a session secret, hashes the password (PBKDF2-SHA256, 100k iters, random salt), writes everything to KV, and signs you in. No env vars or dashboard config required.
 
