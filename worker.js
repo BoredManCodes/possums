@@ -140,6 +140,7 @@ const renderLoginHtml = (err = '', name = '') => `<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#fbf7f0">
   <title>Possums – Sign in</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/styles.css">
   <style>
     body { background: #fbf7f0; }
@@ -214,6 +215,7 @@ const renderSetupHtml = (err = '', vals = {}) => `<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#fbf7f0">
   <title>Possums – Setup</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/styles.css">
   <style>
     body { background: #fbf7f0; }
@@ -654,7 +656,7 @@ export default {
       if (url.pathname.startsWith('/api/')) {
         return json({ error: 'setup required', setup: true }, { status: 401 });
       }
-      if (url.pathname === '/styles.css' || url.pathname === '/favicon.ico') {
+      if (url.pathname === '/styles.css' || url.pathname === '/favicon.ico' || url.pathname === '/favicon.svg') {
         return env.ASSETS.fetch(request);
       }
       return new Response(null, { status: 302, headers: { Location: '/setup' } });
