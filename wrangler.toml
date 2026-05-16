@@ -1,0 +1,14 @@
+name = "possums"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[kv_namespaces]]
+binding = "POSSUMS_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[vars]
+SESSION_SECRET = "change-me-set-via-wrangler-secret"
