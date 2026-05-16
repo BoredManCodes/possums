@@ -83,10 +83,29 @@ const api = {
       if (!r.ok) throw new Error((await r.text()) || `${r.status}`);
       return r.json();
     }),
+  put: (path, body) =>
+    fetch(path, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(handleAuth).then(async (r) => {
+      if (!r.ok) throw new Error((await r.text()) || `${r.status}`);
+      return r.json();
+    }),
   del: (path) =>
     fetch(path, { method: 'DELETE' }).then(handleAuth).then((r) => {
       if (!r.ok && r.status !== 204) throw new Error(`${r.status}`);
     }),
+};
+
+const me = { who: null, parents: { parent1: 'Parent 1', parent2: 'Parent 2' } };
+const parentLabel = (who) => (who && me.parents[who]) || null;
+const loadMe = async () => {
+  try {
+    const r = await fetch('/api/me').then(handleAuth).then((r) => r.json());
+    me.who = r.who;
+    if (r.parents) me.parents = r.parents;
+  } catch {}
 };
 
 /* ---------- icons ---------- */
@@ -152,42 +171,42 @@ const SOURCES = [
         const dur = f.duration_seconds ? ` · ${fmtDuration(f.duration_seconds * 1000)}` : '';
         title = `Breast ${side}${dur}`;
       }
-      return { id: f.id, kind, ts: f.started_at, title, ep: '/api/feeds', notes: f.notes };
+      return { id: f.id, kind, ts: f.started_at, title, ep: '/api/feeds', notes: f.notes, logged_by: f.logged_by };
     } },
   { ep: '/api/nappies', tf: 'changed_at', map: (n) => ({
       id: n.id, kind: 'nappy', ts: n.changed_at,
-      title: KIND_LABELS[n.kind] ?? n.kind, ep: '/api/nappies', notes: n.notes,
+      title: KIND_LABELS[n.kind] ?? n.kind, ep: '/api/nappies', notes: n.notes, logged_by: n.logged_by,
     }) },
   { ep: '/api/naps', tf: 'started_at', map: (n) => {
       const dur = n.ended_at ? fmtDuration(new Date(n.ended_at) - new Date(n.started_at)) : 'in progress';
-      return { id: n.id, kind: 'sleep', ts: n.started_at, title: `Sleep · ${dur}`, ep: '/api/naps', notes: n.notes, ended_at: n.ended_at };
+      return { id: n.id, kind: 'sleep', ts: n.started_at, title: `Sleep · ${dur}`, ep: '/api/naps', notes: n.notes, ended_at: n.ended_at, logged_by: n.logged_by };
     } },
   { ep: '/api/pumps', tf: 'started_at', map: (p) => {
       const total = (p.ml_left ?? 0) + (p.ml_right ?? 0);
       const dur = p.ended_at ? fmtDuration(new Date(p.ended_at) - new Date(p.started_at)) : 'in progress';
       const amt = total > 0 ? ` · ${total} ml` : '';
-      return { id: p.id, kind: 'pump', ts: p.started_at, title: `Pump · ${dur}${amt}`, ep: '/api/pumps', notes: p.notes };
+      return { id: p.id, kind: 'pump', ts: p.started_at, title: `Pump · ${dur}${amt}`, ep: '/api/pumps', notes: p.notes, logged_by: p.logged_by };
     } },
   { ep: '/api/meds', tf: 'given_at', map: (m) => {
       const dose = m.dose ? ` · ${m.dose}${m.unit ?? ''}` : '';
-      return { id: m.id, kind: 'med', ts: m.given_at, title: `${m.name}${dose}`, ep: '/api/meds', notes: m.notes };
+      return { id: m.id, kind: 'med', ts: m.given_at, title: `${m.name}${dose}`, ep: '/api/meds', notes: m.notes, logged_by: m.logged_by };
     } },
   { ep: '/api/growths', tf: 'measured_at', map: (g) => {
       const parts = [];
       if (g.weight_kg) parts.push(`${g.weight_kg} kg`);
       if (g.height_cm) parts.push(`${g.height_cm} cm`);
       if (g.head_cm) parts.push(`head ${g.head_cm} cm`);
-      return { id: g.id, kind: 'growth', ts: g.measured_at, title: parts.join(' · ') || 'Growth', ep: '/api/growths', notes: g.notes };
+      return { id: g.id, kind: 'growth', ts: g.measured_at, title: parts.join(' · ') || 'Growth', ep: '/api/growths', notes: g.notes, logged_by: g.logged_by };
     } },
   { ep: '/api/baths', tf: 'bathed_at', map: (b) => ({
-      id: b.id, kind: 'bath', ts: b.bathed_at, title: 'Bath', ep: '/api/baths', notes: b.notes,
+      id: b.id, kind: 'bath', ts: b.bathed_at, title: 'Bath', ep: '/api/baths', notes: b.notes, logged_by: b.logged_by,
     }) },
   { ep: '/api/tummy-times', tf: 'started_at', map: (t) => {
       const dur = t.ended_at ? fmtDuration(new Date(t.ended_at) - new Date(t.started_at)) : 'in progress';
-      return { id: t.id, kind: 'tummy', ts: t.started_at, title: `Tummy time · ${dur}`, ep: '/api/tummy-times', notes: t.notes };
+      return { id: t.id, kind: 'tummy', ts: t.started_at, title: `Tummy time · ${dur}`, ep: '/api/tummy-times', notes: t.notes, logged_by: t.logged_by };
     } },
   { ep: '/api/milestones', tf: 'reached_at', map: (m) => ({
-      id: m.id, kind: 'milestone', ts: m.reached_at, title: m.title, ep: '/api/milestones', notes: m.notes,
+      id: m.id, kind: 'milestone', ts: m.reached_at, title: m.title, ep: '/api/milestones', notes: m.notes, logged_by: m.logged_by,
     }) },
 ];
 
@@ -201,7 +220,8 @@ const fetchUnified = async (limit = 50) => {
 /* ---------- shared row component ---------- */
 
 const renderEventRow = (ev, opts = {}) => {
-  const sub = `${fmtTime(ev.ts)} · ${relTime(ev.ts)}${ev.notes ? ' · ' + escapeHtml(ev.notes) : ''}`;
+  const by = parentLabel(ev.logged_by);
+  const sub = `${fmtTime(ev.ts)} · ${relTime(ev.ts)}${ev.notes ? ' · ' + escapeHtml(ev.notes) : ''}${by ? ' · by ' + escapeHtml(by) : ''}`;
   const node = el(`
     <div class="row" data-ep="${ev.ep}" data-id="${ev.id}">
       ${chipHtml(ev.kind)}
@@ -576,7 +596,9 @@ views.history = async () => {
 /* ---------- More view ---------- */
 
 views.more = async () => {
+  await loadMe();
   const health = await fetch('/api/health').then((r) => r.json()).catch(() => ({}));
+  const signedAs = me.who ? me.parents[me.who] : 'not signed in';
   const wrap = el(`<div class="stack">
     <div class="card stack">
       <h2 class="card__title">About</h2>
@@ -584,12 +606,25 @@ views.more = async () => {
       <div class="row__sub">Database: <code>${escapeHtml(health.db ?? 'unknown')}</code></div>
     </div>
     <div class="card stack">
+      <h2 class="card__title">Session</h2>
+      <div class="row__sub">Signed in as <strong>${escapeHtml(signedAs)}</strong></div>
+      <a class="btn btn--ghost" href="/logout">Sign out</a>
+    </div>
+    <form class="card stack" id="parents-form">
+      <h2 class="card__title">Parent names</h2>
+      <p class="row__sub">Used to sign in and to label who logged each activity.</p>
+      <label>Parent 1
+        <input type="text" name="parent1" maxlength="60" required value="${escapeHtml(me.parents.parent1)}">
+      </label>
+      <label>Parent 2
+        <input type="text" name="parent2" maxlength="60" required value="${escapeHtml(me.parents.parent2)}">
+      </label>
+      <button type="submit" class="btn">Save names</button>
+      <p class="form-msg" hidden></p>
+    </form>
+    <div class="card stack">
       <h2 class="card__title">Activity types</h2>
       <div class="quick-grid" id="more-types"></div>
-    </div>
-    <div class="card stack">
-      <h2 class="card__title">Session</h2>
-      <a class="btn btn--ghost" href="/logout">Sign out</a>
     </div>
   </div>`);
   app.replaceChildren(wrap);
@@ -601,6 +636,27 @@ views.more = async () => {
       <div class="sheet__tile-label">${ACT[k].label}</div>
     </div>
   `)));
+
+  const form = wrap.querySelector('#parents-form');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const msg = form.querySelector('.form-msg');
+    try {
+      const next = await api.put('/api/parents', {
+        parent1: (fd.get('parent1') || '').toString().trim(),
+        parent2: (fd.get('parent2') || '').toString().trim(),
+      });
+      me.parents = next;
+      msg.classList.remove('form-msg--err');
+      msg.textContent = 'Saved.';
+      msg.hidden = false;
+    } catch (err) {
+      msg.classList.add('form-msg--err');
+      msg.textContent = String(err.message || err);
+      msg.hidden = false;
+    }
+  });
 };
 
 /* ---------- form screens ---------- */
@@ -1097,4 +1153,4 @@ forms.milestone = () => {
 /* ---------- bootstrap ---------- */
 
 tabs.forEach((t) => t.addEventListener('click', () => showTab(t.dataset.tab)));
-showTab('today');
+loadMe().finally(() => showTab('today'));

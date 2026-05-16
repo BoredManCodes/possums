@@ -1,9 +1,35 @@
 const COOKIE_NAME = 'possums_session';
+const WHO_COOKIE = 'possums_who';
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 const SESSION_VALUE = 'ok';
 
 const FEED_KINDS = ['bottle', 'breast_l', 'breast_r', 'solid'];
 const NAPPY_KINDS = ['wet', 'dirty', 'both'];
+const WHO_VALUES = ['parent1', 'parent2'];
+
+const PARENTS_KEY = 'config:parents';
+const DEFAULT_PARENTS = { parent1: 'Parent 1', parent2: 'Parent 2' };
+
+const readParents = async (env) => {
+  const raw = await env.POSSUMS_KV.get(PARENTS_KEY);
+  if (!raw) return { ...DEFAULT_PARENTS };
+  try {
+    const o = JSON.parse(raw);
+    return {
+      parent1: typeof o.parent1 === 'string' && o.parent1 ? o.parent1 : DEFAULT_PARENTS.parent1,
+      parent2: typeof o.parent2 === 'string' && o.parent2 ? o.parent2 : DEFAULT_PARENTS.parent2,
+    };
+  } catch { return { ...DEFAULT_PARENTS }; }
+};
+const writeParents = (env, obj) => env.POSSUMS_KV.put(PARENTS_KEY, JSON.stringify(obj));
+
+const escapeAttr = (s) =>
+  String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const getWho = (request) => {
+  const v = getCookie(request, WHO_COOKIE);
+  return WHO_VALUES.includes(v) ? v : null;
+};
 
 const enc = new TextEncoder();
 
@@ -57,7 +83,7 @@ function json(body, init = {}) {
 
 const badRequest = (msg) => json({ error: msg }, { status: 400 });
 
-const LOGIN_HTML = `<!doctype html>
+const renderLoginHtml = (err = '', name = '') => `<!doctype html>
 <html lang="en-AU">
 <head>
   <meta charset="utf-8">
@@ -81,17 +107,18 @@ const LOGIN_HTML = `<!doctype html>
     <div class="login__card">
       <h1 class="login__title">Possums</h1>
       <form class="login__form" method="post" action="/login">
-        <input class="login__input" type="password" name="password" placeholder="Password" autofocus required>
+        <input class="login__input" type="text" name="name" placeholder="Your name" autocomplete="username" autocapitalize="words" autofocus required value="${escapeAttr(name)}">
+        <input class="login__input" type="password" name="password" placeholder="Password" autocomplete="current-password" required>
         <button class="login__btn" type="submit">Sign in</button>
-        <p class="login__err">__ERR__</p>
+        <p class="login__err">${escapeAttr(err)}</p>
       </form>
     </div>
   </main>
 </body>
 </html>`;
 
-function loginPage(err = '') {
-  return new Response(LOGIN_HTML.replace('__ERR__', err), {
+function loginPage(err = '', name = '') {
+  return new Response(renderLoginHtml(err, name), {
     headers: { 'content-type': 'text/html; charset=utf-8' },
   });
 }
@@ -103,25 +130,30 @@ function cookieFlags(url) {
 
 async function handleLogin(request, env, url) {
   const form = await request.formData();
-  if (!env.PASSWORD || form.get('password') !== env.PASSWORD) return loginPage('Wrong password.');
+  const typedName = String(form.get('name') ?? '').trim();
+  const typedPwd = form.get('password');
+  const parents = await readParents(env);
+  const norm = (s) => s.trim().toLowerCase();
+  let who = null;
+  if (typedName && norm(parents.parent1) === norm(typedName)) who = 'parent1';
+  else if (typedName && norm(parents.parent2) === norm(typedName)) who = 'parent2';
+  if (!who) return loginPage('Name not recognised.', typedName);
+  if (!env.PASSWORD || typedPwd !== env.PASSWORD) return loginPage('Wrong password.', typedName);
+
   const token = await signSession(env.SESSION_SECRET);
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: '/',
-      'Set-Cookie': `${COOKIE_NAME}=${token}; Max-Age=${COOKIE_MAX_AGE}; ${cookieFlags(url)}`,
-    },
-  });
+  const flags = cookieFlags(url);
+  const headers = new Headers({ Location: '/' });
+  headers.append('Set-Cookie', `${COOKIE_NAME}=${token}; Max-Age=${COOKIE_MAX_AGE}; ${flags}`);
+  headers.append('Set-Cookie', `${WHO_COOKIE}=${who}; Max-Age=${COOKIE_MAX_AGE}; ${flags}`);
+  return new Response(null, { status: 302, headers });
 }
 
 function logoutResponse(url) {
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: '/login',
-      'Set-Cookie': `${COOKIE_NAME}=; Max-Age=0; ${cookieFlags(url)}`,
-    },
-  });
+  const flags = cookieFlags(url);
+  const headers = new Headers({ Location: '/login' });
+  headers.append('Set-Cookie', `${COOKIE_NAME}=; Max-Age=0; ${flags}`);
+  headers.append('Set-Cookie', `${WHO_COOKIE}=; Max-Age=0; ${flags}`);
+  return new Response(null, { status: 302, headers });
 }
 
 /* ---------- data layer ---------- */
@@ -339,7 +371,7 @@ async function handleSimple(name, request, url, env, idStr) {
       const err = res.validate(b);
       if (err) return badRequest(err);
       const list = await readList(env, res.key);
-      const row = { id: nextId(list), ...res.build(b), created_at: nowSec() };
+      const row = { id: nextId(list), ...res.build(b), logged_by: getWho(request), created_at: nowSec() };
       list.push(row);
       await writeList(env, res.key, list);
       return json(row, { status: 201 });
@@ -371,7 +403,7 @@ async function handleTimed(name, request, url, env, idStr, sub) {
       const err = res.validateStart(b);
       if (err) return badRequest(err);
       const list = await readList(env, res.key);
-      const row = { id: nextId(list), ...res.buildStart(b), created_at: nowSec() };
+      const row = { id: nextId(list), ...res.buildStart(b), logged_by: getWho(request), created_at: nowSec() };
       list.push(row);
       await writeList(env, res.key, list);
       return json(row, { status: 201 });
@@ -420,9 +452,34 @@ async function handleTimed(name, request, url, env, idStr, sub) {
 
 const TIMED_PATHS = { naps: 'naps', pumps: 'pumps', 'tummy-times': 'tummy_times' };
 
+async function handleParents(request, env) {
+  if (request.method === 'GET') {
+    return json(await readParents(env));
+  }
+  if (request.method === 'PUT') {
+    const b = await readBody(request);
+    if (!b) return badRequest('json required');
+    if (!isStr(b.parent1, 1, 60) || !isStr(b.parent2, 1, 60)) return badRequest('parent1 and parent2 names required (max 60 chars)');
+    const next = { parent1: b.parent1.trim(), parent2: b.parent2.trim() };
+    if (!next.parent1 || !next.parent2) return badRequest('names cannot be blank');
+    await writeParents(env, next);
+    return json(next);
+  }
+  return new Response('Method not allowed', { status: 405 });
+}
+
+async function handleMe(request, env) {
+  if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
+  const who = getWho(request);
+  const parents = await readParents(env);
+  return json({ who, name: who ? parents[who] : null, parents });
+}
+
 async function handleApi(request, url, env) {
   const parts = url.pathname.split('/').filter(Boolean);
   if (parts[1] === 'health') return json({ ok: true, db: 'kv' });
+  if (parts[1] === 'parents') return handleParents(request, env);
+  if (parts[1] === 'me') return handleMe(request, env);
   if (simple[parts[1]]) return handleSimple(parts[1], request, url, env, parts[2]);
   if (TIMED_PATHS[parts[1]]) return handleTimed(TIMED_PATHS[parts[1]], request, url, env, parts[2], parts[3]);
   return json({ error: 'not found' }, { status: 404 });
