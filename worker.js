@@ -1,4 +1,3 @@
-const PASSWORD = 'eloise';
 const COOKIE_NAME = 'possums_session';
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 const SESSION_VALUE = 'ok';
@@ -104,7 +103,7 @@ function cookieFlags(url) {
 
 async function handleLogin(request, env, url) {
   const form = await request.formData();
-  if (form.get('password') !== PASSWORD) return loginPage('Wrong password.');
+  if (!env.PASSWORD || form.get('password') !== env.PASSWORD) return loginPage('Wrong password.');
   const token = await signSession(env.SESSION_SECRET);
   return new Response(null, {
     status: 302,
