@@ -336,7 +336,7 @@ label {
 /* Stat header (Today screen) */
 .stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
 }
 .stat {
@@ -407,9 +407,20 @@ label {
 .t-milestone { background: var(--milestone-soft); color: var(--milestone-ink); }
 .t-spitup    { background: var(--spitup-soft);    color: var(--spitup-ink); }
 
-.stat--feed  { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--feed); }
-.stat--sleep { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--sleep); }
-.stat--nappy { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--nappy); }
+.stat--feed   { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--feed); }
+.stat--sleep  { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--sleep); }
+.stat--nappy  { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--nappy); }
+.stat--growth { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--growth); }
+
+.stat__trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-weight: 600;
+}
+.stat__trend--up   { color: var(--ok); }
+.stat__trend--down { color: var(--danger); }
+.stat__trend--flat { color: var(--ink-dim); }
 
 /* Live timer card */
 .live {

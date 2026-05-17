@@ -408,11 +408,91 @@ views.today = async () => {
     return node;
   };
 
+  const buildTrendTiles = ({ feeds, nappies, naps, growths }) => {
+    const now = Date.now();
+    const todayMs = todayStart().getTime();
+    const elapsed = now - todayMs;
+    const ydayStart = todayMs - 86400000;
+    const ydayEnd = ydayStart + elapsed;
+
+    const sumMl = (list, start, end, field) => list.reduce((acc, f) => {
+      const t = new Date(f[field]).getTime();
+      return (t >= start && t <= end) ? acc + (f.amount_ml || 0) : acc;
+    }, 0);
+
+    const countIn = (list, start, end, field) => list.reduce((acc, n) => {
+      const t = new Date(n[field]).getTime();
+      return (t >= start && t <= end) ? acc + 1 : acc;
+    }, 0);
+
+    const napOverlapMs = (n, winStart, winEnd) => {
+      const s = new Date(n.started_at).getTime();
+      const e = n.ended_at ? new Date(n.ended_at).getTime() : now;
+      return Math.max(0, Math.min(e, winEnd) - Math.max(s, winStart));
+    };
+    const sumNapMs = (winStart, winEnd) =>
+      naps.reduce((acc, n) => acc + napOverlapMs(n, winStart, winEnd), 0);
+
+    const bottleFeeds = feeds.filter((f) => f.kind === 'bottle' || f.kind === undefined);
+    const drankToday = sumMl(bottleFeeds, todayMs, now, 'started_at');
+    const drankYday  = sumMl(bottleFeeds, ydayStart, ydayEnd, 'started_at');
+
+    const sleepToday = sumNapMs(todayMs, now);
+    const sleepYday  = sumNapMs(ydayStart, ydayEnd);
+
+    const nappiesToday = countIn(nappies, todayMs, now, 'changed_at');
+    const nappiesYday  = countIn(nappies, ydayStart, ydayEnd, 'changed_at');
+
+    const trend = (today, yday, fmt) => {
+      if (yday === 0 && today === 0) return 'no data yesterday';
+      if (yday === 0) return 'first time today';
+      const delta = today - yday;
+      if (delta === 0) return `<span class="stat__trend stat__trend--flat">→ same as yesterday</span>`;
+      const arrow = delta > 0 ? '↑' : '↓';
+      const cls = delta > 0 ? 'up' : 'down';
+      return `<span class="stat__trend stat__trend--${cls}">${arrow} ${fmt(Math.abs(delta))} vs yesterday</span>`;
+    };
+
+    const drankValue = drankToday > 0 ? `${drankToday} ml` : '—';
+    const sleepValue = sleepToday > 0 ? fmtDuration(sleepToday) : '—';
+    const nappiesValue = `${nappiesToday}`;
+
+    const tiles = [
+      statTile('Drank today', drankValue, trend(drankToday, drankYday, (n) => `${n} ml`), 'bottle', 'history'),
+      statTile('Slept today', sleepValue, trend(sleepToday, sleepYday, fmtDuration), 'sleep', 'sleep'),
+      statTile('Nappies today', nappiesValue, trend(nappiesToday, nappiesYday, (n) => String(n)), 'nappy', 'history'),
+    ];
+
+    const growthsByDate = [...growths].sort((a, b) => new Date(b.measured_at) - new Date(a.measured_at));
+    const latestWeight = growthsByDate.find((g) => g.weight_kg != null);
+    const prevWeight = latestWeight
+      ? growthsByDate.find((g) => g.weight_kg != null && g.id !== latestWeight.id && new Date(g.measured_at) < new Date(latestWeight.measured_at))
+      : null;
+    let growthValue = '—';
+    let growthSub = 'no weight logged';
+    if (latestWeight) {
+      growthValue = `${latestWeight.weight_kg} kg`;
+      if (prevWeight) {
+        const delta = latestWeight.weight_kg - prevWeight.weight_kg;
+        const sign = delta > 0 ? '↑' : delta < 0 ? '↓' : '→';
+        const cls = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
+        const ago = relTime(prevWeight.measured_at);
+        growthSub = `<span class="stat__trend stat__trend--${cls}">${sign} ${Math.abs(delta).toFixed(3)} kg</span> since ${ago}`;
+      } else {
+        growthSub = `logged ${relTime(latestWeight.measured_at)}`;
+      }
+    }
+    tiles.push(statTile('Weight', growthValue, growthSub, 'growth', 'history'));
+
+    return tiles;
+  };
+
   const refresh = async () => {
-    const [feeds, nappies, naps, currentNap, bottleTimer, allEvents] = await Promise.all([
-      api.list('/api/feeds?limit=1'),
-      api.list('/api/nappies?limit=1'),
-      api.list('/api/naps?limit=1'),
+    const [feeds, nappies, naps, growths, currentNap, bottleTimer, allEvents] = await Promise.all([
+      api.list('/api/feeds?limit=200'),
+      api.list('/api/nappies?limit=200'),
+      api.list('/api/naps?limit=100'),
+      api.list('/api/growths?limit=20'),
       api.list('/api/naps/current'),
       api.list('/api/bottle-timer'),
       fetchUnified(80),
@@ -421,33 +501,7 @@ views.today = async () => {
     renderLive(currentNap, bottleTimer);
 
     const stats = wrap.querySelector('#today-stats');
-    const lastFeed = feeds[0];
-    const lastNappy = nappies[0];
-    const lastSleep = naps[0];
-    stats.replaceChildren(
-      statTile(
-        'Last feed',
-        lastFeed ? (lastFeed.amount_ml ? `${lastFeed.amount_ml} ml` : 'Feed') : '—',
-        lastFeed ? relTime(lastFeed.started_at) : 'no feeds yet',
-        'bottle', 'history'
-      ),
-      statTile(
-        'Last sleep',
-        lastSleep
-          ? (lastSleep.ended_at
-              ? fmtDuration(new Date(lastSleep.ended_at) - new Date(lastSleep.started_at))
-              : 'in progress')
-          : '—',
-        lastSleep ? relTime(lastSleep.ended_at ?? lastSleep.started_at) : 'no sleep yet',
-        'sleep', 'sleep'
-      ),
-      statTile(
-        'Last nappy',
-        lastNappy ? (KIND_LABELS[lastNappy.kind] ?? lastNappy.kind) : '—',
-        lastNappy ? relTime(lastNappy.changed_at) : 'no nappies yet',
-        'nappy', 'history'
-      ),
-    );
+    stats.replaceChildren(...buildTrendTiles({ feeds, nappies, naps, growths }));
 
     const start = todayStart().getTime();
     const today = allEvents.filter((e) => new Date(e.ts).getTime() >= start);
