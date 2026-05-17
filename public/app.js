@@ -204,7 +204,7 @@ const SOURCES = [
   { ep: '/api/growths', tf: 'measured_at', map: (g) => {
       const parts = [];
       if (g.weight_kg) parts.push(`${g.weight_kg} kg`);
-      if (g.height_cm) parts.push(`${g.height_cm} cm`);
+      if (g.height_cm) parts.push(`length ${g.height_cm} cm`);
       if (g.head_cm) parts.push(`head ${g.head_cm} cm`);
       return { id: g.id, kind: 'growth', ts: g.measured_at, title: parts.join(' · ') || 'Growth', ep: '/api/growths', notes: g.notes, logged_by: g.logged_by };
     } },
@@ -1281,16 +1281,17 @@ forms.growth = () => {
     <label>When
       <input type="datetime-local" name="when" required value="${nowLocal()}">
     </label>
+    <p class="form-hint">Fill any combination — leave the rest blank.</p>
     <div class="grid-2">
       <label>Weight (kg)
-        <input type="number" name="weight_kg" inputmode="decimal" min="0" max="50" step="0.01">
+        <input type="number" name="weight_kg" inputmode="decimal" min="0" max="50" step="0.01" placeholder="optional">
       </label>
-      <label>Height (cm)
-        <input type="number" name="height_cm" inputmode="decimal" min="0" max="200" step="0.1">
+      <label>Length (cm)
+        <input type="number" name="height_cm" inputmode="decimal" min="0" max="200" step="0.1" placeholder="optional">
       </label>
     </div>
     <label>Head circumference (cm)
-      <input type="number" name="head_cm" inputmode="decimal" min="0" max="100" step="0.1">
+      <input type="number" name="head_cm" inputmode="decimal" min="0" max="100" step="0.1" placeholder="optional">
     </label>
     <label>Notes
       <input type="text" name="notes" maxlength="500" placeholder="optional">
@@ -1299,12 +1300,19 @@ forms.growth = () => {
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(f);
+    const weight = fd.get('weight_kg') ? Number(fd.get('weight_kg')) : null;
+    const height = fd.get('height_cm') ? Number(fd.get('height_cm')) : null;
+    const head = fd.get('head_cm') ? Number(fd.get('head_cm')) : null;
+    if (weight == null && height == null && head == null) {
+      onErr(f, new Error('Enter at least one measurement.'));
+      return;
+    }
     try {
       await api.post('/api/growths', {
         measured_at: `${fd.get('when')}:00`,
-        weight_kg: fd.get('weight_kg') ? Number(fd.get('weight_kg')) : null,
-        height_cm: fd.get('height_cm') ? Number(fd.get('height_cm')) : null,
-        head_cm: fd.get('head_cm') ? Number(fd.get('head_cm')) : null,
+        weight_kg: weight,
+        height_cm: height,
+        head_cm: head,
         notes: (fd.get('notes') || '').trim() || null,
       });
       onSaved(f, 'Growth saved.');

@@ -327,6 +327,11 @@ label {
   font-weight: 500;
 }
 .form-msg--err { color: var(--danger); }
+.form-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+}
 
 /* Stat header (Today screen) */
 .stats {
