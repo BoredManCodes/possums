@@ -94,6 +94,16 @@ const api = {
       if (r.status === 204) return null;
       return r.json();
     }),
+  patch: (path, body) =>
+    fetch(path, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(handleAuth).then(async (r) => {
+      if (!r.ok) throw new Error((await r.text()) || `${r.status}`);
+      if (r.status === 204) return null;
+      return r.json();
+    }),
   del: (path) =>
     fetch(path, { method: 'DELETE' }).then(handleAuth).then((r) => {
       if (!r.ok && r.status !== 204) throw new Error(`${r.status}`);
@@ -181,46 +191,46 @@ const SOURCES = [
         const dur = f.duration_seconds ? ` · ${fmtDuration(f.duration_seconds * 1000)}` : '';
         title = `Breast ${side}${dur}`;
       }
-      return { id: f.id, kind, ts: f.started_at, title, ep: '/api/feeds', notes: f.notes, logged_by: f.logged_by };
+      return { id: f.id, kind, ts: f.started_at, title, ep: '/api/feeds', notes: f.notes, logged_by: f.logged_by, raw: f };
     } },
   { ep: '/api/nappies', tf: 'changed_at', map: (n) => ({
       id: n.id, kind: 'nappy', ts: n.changed_at,
-      title: KIND_LABELS[n.kind] ?? n.kind, ep: '/api/nappies', notes: n.notes, logged_by: n.logged_by,
+      title: KIND_LABELS[n.kind] ?? n.kind, ep: '/api/nappies', notes: n.notes, logged_by: n.logged_by, raw: n,
     }) },
   { ep: '/api/naps', tf: 'started_at', map: (n) => {
       const dur = n.ended_at ? fmtDuration(new Date(n.ended_at) - new Date(n.started_at)) : 'in progress';
-      return { id: n.id, kind: 'sleep', ts: n.started_at, title: `Sleep · ${dur}`, ep: '/api/naps', notes: n.notes, ended_at: n.ended_at, logged_by: n.logged_by };
+      return { id: n.id, kind: 'sleep', ts: n.started_at, title: `Sleep · ${dur}`, ep: '/api/naps', notes: n.notes, ended_at: n.ended_at, logged_by: n.logged_by, raw: n };
     } },
   { ep: '/api/pumps', tf: 'started_at', map: (p) => {
       const total = (p.ml_left ?? 0) + (p.ml_right ?? 0);
       const dur = p.ended_at ? fmtDuration(new Date(p.ended_at) - new Date(p.started_at)) : 'in progress';
       const amt = total > 0 ? ` · ${total} ml` : '';
-      return { id: p.id, kind: 'pump', ts: p.started_at, title: `Pump · ${dur}${amt}`, ep: '/api/pumps', notes: p.notes, logged_by: p.logged_by };
+      return { id: p.id, kind: 'pump', ts: p.started_at, title: `Pump · ${dur}${amt}`, ep: '/api/pumps', notes: p.notes, logged_by: p.logged_by, raw: p };
     } },
   { ep: '/api/meds', tf: 'given_at', map: (m) => {
       const dose = m.dose ? ` · ${m.dose}${m.unit ?? ''}` : '';
-      return { id: m.id, kind: 'med', ts: m.given_at, title: `${m.name}${dose}`, ep: '/api/meds', notes: m.notes, logged_by: m.logged_by };
+      return { id: m.id, kind: 'med', ts: m.given_at, title: `${m.name}${dose}`, ep: '/api/meds', notes: m.notes, logged_by: m.logged_by, raw: m };
     } },
   { ep: '/api/growths', tf: 'measured_at', map: (g) => {
       const parts = [];
       if (g.weight_kg) parts.push(`${g.weight_kg} kg`);
       if (g.height_cm) parts.push(`length ${g.height_cm} cm`);
       if (g.head_cm) parts.push(`head ${g.head_cm} cm`);
-      return { id: g.id, kind: 'growth', ts: g.measured_at, title: parts.join(' · ') || 'Growth', ep: '/api/growths', notes: g.notes, logged_by: g.logged_by };
+      return { id: g.id, kind: 'growth', ts: g.measured_at, title: parts.join(' · ') || 'Growth', ep: '/api/growths', notes: g.notes, logged_by: g.logged_by, raw: g };
     } },
   { ep: '/api/baths', tf: 'bathed_at', map: (b) => ({
-      id: b.id, kind: 'bath', ts: b.bathed_at, title: 'Bath', ep: '/api/baths', notes: b.notes, logged_by: b.logged_by,
+      id: b.id, kind: 'bath', ts: b.bathed_at, title: 'Bath', ep: '/api/baths', notes: b.notes, logged_by: b.logged_by, raw: b,
     }) },
   { ep: '/api/tummy-times', tf: 'started_at', map: (t) => {
       const dur = t.ended_at ? fmtDuration(new Date(t.ended_at) - new Date(t.started_at)) : 'in progress';
-      return { id: t.id, kind: 'tummy', ts: t.started_at, title: `Tummy time · ${dur}`, ep: '/api/tummy-times', notes: t.notes, logged_by: t.logged_by };
+      return { id: t.id, kind: 'tummy', ts: t.started_at, title: `Tummy time · ${dur}`, ep: '/api/tummy-times', notes: t.notes, logged_by: t.logged_by, raw: t };
     } },
   { ep: '/api/milestones', tf: 'reached_at', map: (m) => ({
-      id: m.id, kind: 'milestone', ts: m.reached_at, title: m.title, ep: '/api/milestones', notes: m.notes, logged_by: m.logged_by,
+      id: m.id, kind: 'milestone', ts: m.reached_at, title: m.title, ep: '/api/milestones', notes: m.notes, logged_by: m.logged_by, raw: m,
     }) },
   { ep: '/api/spitups', tf: 'happened_at', map: (s) => ({
       id: s.id, kind: 'spitup', ts: s.happened_at,
-      title: `${KIND_LABELS[s.kind] ?? s.kind} spit-up`, ep: '/api/spitups', notes: s.notes, logged_by: s.logged_by,
+      title: `${KIND_LABELS[s.kind] ?? s.kind} spit-up`, ep: '/api/spitups', notes: s.notes, logged_by: s.logged_by, raw: s,
     }) },
 ];
 
@@ -236,6 +246,7 @@ const fetchUnified = async (limit = 50) => {
 const renderEventRow = (ev, opts = {}) => {
   const by = parentLabel(ev.logged_by);
   const sub = `${fmtTime(ev.ts)} · ${relTime(ev.ts)}${ev.notes ? ' · ' + escapeHtml(ev.notes) : ''}${by ? ' · by ' + escapeHtml(by) : ''}`;
+  const canEdit = opts.showEdit !== false && editForms[ev.kind] && ev.raw;
   const node = el(`
     <div class="row" data-ep="${ev.ep}" data-id="${ev.id}">
       ${chipHtml(ev.kind)}
@@ -243,9 +254,12 @@ const renderEventRow = (ev, opts = {}) => {
         <div class="row__title">${escapeHtml(ev.title)}</div>
         <div class="row__sub">${sub}</div>
       </div>
+      ${canEdit ? '<button class="row__edit" aria-label="Edit">✎</button>' : ''}
       ${opts.showDelete === false ? '' : '<button class="row__del" aria-label="Delete">×</button>'}
     </div>
   `);
+  const edit = node.querySelector('.row__edit');
+  if (edit) edit.addEventListener('click', () => showEditForm(ev));
   const del = node.querySelector('.row__del');
   if (del) del.addEventListener('click', async () => {
     if (!confirm(`Delete this ${ACT[ev.kind].label.toLowerCase()}?`)) return;
@@ -293,6 +307,17 @@ const showForm = (kind) => {
   closeSheet();
   setHeader(`Log ${ACT[kind].label.toLowerCase()}`, '', true);
   forms[kind]();
+};
+
+const showEditForm = (ev) => {
+  const fn = editForms[ev.kind];
+  if (!fn || !ev.raw) return;
+  if (viewCleanup) { try { viewCleanup(); } catch {} viewCleanup = null; }
+  onScreen = `edit:${ev.kind}`;
+  setActiveTab(null);
+  closeSheet();
+  setHeader(`Edit ${ACT[ev.kind].label.toLowerCase()}`, '', true);
+  fn(ev.raw);
 };
 
 topBack.addEventListener('click', () => showTab(currentTab));
@@ -1044,6 +1069,15 @@ forms.bottle = () => {
             <input type="number" name="amount_ml" inputmode="numeric" min="0" max="2000" step="5" placeholder="e.g. 120">
           </label>
         </div>
+        <div>
+          <label style="margin-bottom:6px">Did you change a nappy?</label>
+          <div class="seg" id="past-bottle-nappy">
+            <button type="button" class="seg__btn is-on" data-nappy="none">No</button>
+            <button type="button" class="seg__btn" data-nappy="wet">Wet</button>
+            <button type="button" class="seg__btn" data-nappy="dirty">Dirty</button>
+            <button type="button" class="seg__btn" data-nappy="both">Both</button>
+          </div>
+        </div>
         <label>Notes
           <input type="text" name="notes" maxlength="500" placeholder="optional">
         </label>
@@ -1125,7 +1159,15 @@ forms.bottle = () => {
 
         <div class="live__sub" id="bottle-end-preview" style="margin-top:6px;font-weight:600;color:var(--feed-ink)"></div>
 
-        <button class="btn" id="end-bottle">End bottle</button>
+        <div class="live__sub" style="margin-top:12px;width:100%;max-width:320px;text-align:left">Did you change a nappy?</div>
+        <div class="seg" id="bottle-nappy" style="width:100%;max-width:320px;margin-top:4px">
+          <button type="button" class="seg__btn is-on" data-nappy="none">No</button>
+          <button type="button" class="seg__btn" data-nappy="wet">Wet</button>
+          <button type="button" class="seg__btn" data-nappy="dirty">Dirty</button>
+          <button type="button" class="seg__btn" data-nappy="both">Both</button>
+        </div>
+
+        <button class="btn" id="end-bottle" style="margin-top:10px">End bottle</button>
         <button class="btn btn--ghost" id="cancel-bottle" style="margin-top:6px">Cancel timer</button>
         <p class="form-msg" hidden></p>
       </div>
@@ -1214,6 +1256,14 @@ forms.bottle = () => {
       renderInputs();
     });
 
+    let nappyKind = 'none';
+    node.querySelector('#bottle-nappy').addEventListener('click', (e) => {
+      const btn = e.target.closest('.seg__btn');
+      if (!btn) return;
+      nappyKind = btn.dataset.nappy;
+      node.querySelectorAll('#bottle-nappy .seg__btn').forEach((x) => x.classList.toggle('is-on', x === btn));
+    });
+
     node.querySelector('#end-bottle').addEventListener('click', async (e) => {
       const drank = computeDrank();
       if (drank == null) {
@@ -1227,6 +1277,9 @@ forms.bottle = () => {
       e.target.disabled = true;
       try {
         await api.post('/api/bottle-timer/end', { amount_ml: drank });
+        if (nappyKind !== 'none') {
+          await api.post('/api/nappies', { changed_at: nowLocalISO(), kind: nappyKind });
+        }
         showTab('today');
       } catch (err) {
         msg.classList.add('form-msg--err');
@@ -1252,18 +1305,31 @@ forms.bottle = () => {
     else renderStart();
   };
 
-  wrap.querySelector('#bottle-past-form').addEventListener('submit', async (e) => {
+  const pastForm = wrap.querySelector('#bottle-past-form');
+  let pastNappyKind = 'none';
+  pastForm.querySelector('#past-bottle-nappy').addEventListener('click', (e) => {
+    const btn = e.target.closest('.seg__btn');
+    if (!btn) return;
+    pastNappyKind = btn.dataset.nappy;
+    pastForm.querySelectorAll('#past-bottle-nappy .seg__btn').forEach((x) => x.classList.toggle('is-on', x === btn));
+  });
+
+  pastForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     const msgEl = e.target.querySelector('.form-msg');
+    const when = `${fd.get('when')}:00`;
     try {
       await api.post('/api/feeds', {
-        started_at: `${fd.get('when')}:00`,
+        started_at: when,
         kind: 'bottle',
         amount_ml: fd.get('amount_ml') ? Number(fd.get('amount_ml')) : null,
         started_ml: fd.get('started_ml') ? Number(fd.get('started_ml')) : null,
         notes: (fd.get('notes') || '').trim() || null,
       });
+      if (pastNappyKind !== 'none') {
+        await api.post('/api/nappies', { changed_at: when, kind: pastNappyKind });
+      }
       showTab('today');
     } catch (err) {
       msgEl.classList.add('form-msg--err');
@@ -1754,6 +1820,432 @@ forms.spitup = () => {
         notes: (fd.get('notes') || '').trim() || null,
       });
       onSaved(f, 'Spit-up saved.');
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+/* ---------- edit forms (PATCH) ---------- */
+
+const isoToLocal = (iso) => (iso ? String(iso).slice(0, 16) : '');
+
+const editShell = (innerHtml) => {
+  const node = el(`<form class="card stack" id="edit-form">
+    ${innerHtml}
+    <div class="grid-2">
+      <button type="button" class="btn btn--ghost" id="edit-cancel">Cancel</button>
+      <button type="submit" class="btn">Save changes</button>
+    </div>
+    <p class="form-msg" hidden></p>
+  </form>`);
+  app.replaceChildren(node);
+  node.querySelector('#edit-cancel').addEventListener('click', () => showTab(currentTab));
+  return node;
+};
+
+const onEditSaved = (form) => {
+  const m = form.querySelector('.form-msg');
+  m.classList.remove('form-msg--err');
+  m.textContent = 'Saved.';
+  m.hidden = false;
+  setTimeout(() => showTab(currentTab), 500);
+};
+
+const editForms = {};
+
+editForms.bottle = (row) => {
+  const f = editShell(`
+    <label>When
+      <input type="datetime-local" name="when" required value="${isoToLocal(row.started_at)}">
+    </label>
+    <div class="grid-2">
+      <label>Offered (ml)
+        <input type="number" name="started_ml" inputmode="numeric" min="0" max="2000" step="5" value="${row.started_ml ?? ''}">
+      </label>
+      <label>Drank (ml)
+        <input type="number" name="amount_ml" inputmode="numeric" min="0" max="2000" step="5" value="${row.amount_ml ?? ''}">
+      </label>
+    </div>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" value="${escapeHtml(row.notes ?? '')}">
+    </label>
+  `);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    try {
+      await api.patch(`/api/feeds/${row.id}`, {
+        started_at: `${fd.get('when')}:00`,
+        amount_ml: fd.get('amount_ml') ? Number(fd.get('amount_ml')) : null,
+        started_ml: fd.get('started_ml') ? Number(fd.get('started_ml')) : null,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onEditSaved(f);
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+editForms.breast = (row) => {
+  const side0 = row.kind === 'breast_r' ? 'breast_r' : 'breast_l';
+  const mins0 = row.duration_seconds ? Math.round(row.duration_seconds / 60) : '';
+  const f = editShell(`
+    <label>When
+      <input type="datetime-local" name="when" required value="${isoToLocal(row.started_at)}">
+    </label>
+    <div>
+      <label style="margin-bottom:6px">Side</label>
+      <div class="seg" id="edit-side-seg">
+        <button type="button" class="seg__btn ${side0 === 'breast_l' ? 'is-on' : ''}" data-side="breast_l">Left</button>
+        <button type="button" class="seg__btn ${side0 === 'breast_r' ? 'is-on' : ''}" data-side="breast_r">Right</button>
+      </div>
+    </div>
+    <label>Duration (minutes)
+      <input type="number" name="minutes" inputmode="numeric" min="0" max="240" step="1" value="${mins0}">
+    </label>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" value="${escapeHtml(row.notes ?? '')}">
+    </label>
+  `);
+  let side = side0;
+  f.querySelectorAll('#edit-side-seg .seg__btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      side = b.dataset.side;
+      f.querySelectorAll('#edit-side-seg .seg__btn').forEach((x) => x.classList.toggle('is-on', x === b));
+    })
+  );
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    const mins = fd.get('minutes');
+    try {
+      await api.patch(`/api/feeds/${row.id}`, {
+        started_at: `${fd.get('when')}:00`,
+        kind: side,
+        duration_seconds: mins ? Number(mins) * 60 : null,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onEditSaved(f);
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+editForms.solid = (row) => {
+  const f = editShell(`
+    <label>When
+      <input type="datetime-local" name="when" required value="${isoToLocal(row.started_at)}">
+    </label>
+    <label>Amount (g)
+      <input type="number" name="amount_ml" inputmode="numeric" min="0" max="2000" step="5" value="${row.amount_ml ?? ''}">
+    </label>
+    <label>What
+      <input type="text" name="notes" maxlength="500" value="${escapeHtml(row.notes ?? '')}">
+    </label>
+  `);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    try {
+      await api.patch(`/api/feeds/${row.id}`, {
+        started_at: `${fd.get('when')}:00`,
+        amount_ml: fd.get('amount_ml') ? Number(fd.get('amount_ml')) : null,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onEditSaved(f);
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+editForms.nappy = (row) => {
+  const f = editShell(`
+    <label>When
+      <input type="datetime-local" name="when" required value="${isoToLocal(row.changed_at)}">
+    </label>
+    <div>
+      <label style="margin-bottom:6px">Kind</label>
+      <div class="seg" id="edit-kind-seg">
+        <button type="button" class="seg__btn ${row.kind === 'wet' ? 'is-on' : ''}" data-kind="wet">Wet</button>
+        <button type="button" class="seg__btn ${row.kind === 'dirty' ? 'is-on' : ''}" data-kind="dirty">Dirty</button>
+        <button type="button" class="seg__btn ${row.kind === 'both' ? 'is-on' : ''}" data-kind="both">Both</button>
+      </div>
+    </div>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" value="${escapeHtml(row.notes ?? '')}">
+    </label>
+  `);
+  let kind = row.kind;
+  f.querySelectorAll('#edit-kind-seg .seg__btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      kind = b.dataset.kind;
+      f.querySelectorAll('#edit-kind-seg .seg__btn').forEach((x) => x.classList.toggle('is-on', x === b));
+    })
+  );
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    try {
+      await api.patch(`/api/nappies/${row.id}`, {
+        changed_at: `${fd.get('when')}:00`,
+        kind,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onEditSaved(f);
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+editForms.spitup = (row) => {
+  const f = editShell(`
+    <label>When
+      <input type="datetime-local" name="when" required value="${isoToLocal(row.happened_at)}">
+    </label>
+    <div>
+      <label style="margin-bottom:6px">Size</label>
+      <div class="seg" id="edit-spit-seg" style="grid-template-columns: 1fr 1fr; grid-auto-flow: row;">
+        <button type="button" class="seg__btn ${row.kind === 'small' ? 'is-on' : ''}" data-kind="small">Small</button>
+        <button type="button" class="seg__btn ${row.kind === 'medium' ? 'is-on' : ''}" data-kind="medium">Medium</button>
+        <button type="button" class="seg__btn ${row.kind === 'large' ? 'is-on' : ''}" data-kind="large">Large</button>
+        <button type="button" class="seg__btn ${row.kind === 'projectile' ? 'is-on' : ''}" data-kind="projectile">Projectile</button>
+      </div>
+    </div>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" value="${escapeHtml(row.notes ?? '')}">
+    </label>
+  `);
+  let kind = row.kind;
+  f.querySelectorAll('#edit-spit-seg .seg__btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      kind = b.dataset.kind;
+      f.querySelectorAll('#edit-spit-seg .seg__btn').forEach((x) => x.classList.toggle('is-on', x === b));
+    })
+  );
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    try {
+      await api.patch(`/api/spitups/${row.id}`, {
+        happened_at: `${fd.get('when')}:00`,
+        kind,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onEditSaved(f);
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+editForms.sleep = (row) => {
+  const f = editShell(`
+    <label>Started
+      <input type="datetime-local" name="started_at" required value="${isoToLocal(row.started_at)}">
+    </label>
+    <label>Ended
+      <input type="datetime-local" name="ended_at" value="${isoToLocal(row.ended_at)}">
+    </label>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" value="${escapeHtml(row.notes ?? '')}">
+    </label>
+  `);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    const ended_raw = fd.get('ended_at');
+    try {
+      await api.patch(`/api/naps/${row.id}`, {
+        started_at: `${fd.get('started_at')}:00`,
+        ended_at: ended_raw ? `${ended_raw}:00` : null,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onEditSaved(f);
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+editForms.pump = (row) => {
+  const f = editShell(`
+    <label>Started
+      <input type="datetime-local" name="started_at" required value="${isoToLocal(row.started_at)}">
+    </label>
+    <label>Ended
+      <input type="datetime-local" name="ended_at" value="${isoToLocal(row.ended_at)}">
+    </label>
+    <div class="grid-2">
+      <label>Left (ml)
+        <input type="number" name="ml_left" inputmode="numeric" min="0" max="2000" step="5" value="${row.ml_left ?? ''}">
+      </label>
+      <label>Right (ml)
+        <input type="number" name="ml_right" inputmode="numeric" min="0" max="2000" step="5" value="${row.ml_right ?? ''}">
+      </label>
+    </div>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" value="${escapeHtml(row.notes ?? '')}">
+    </label>
+  `);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    const ended_raw = fd.get('ended_at');
+    try {
+      await api.patch(`/api/pumps/${row.id}`, {
+        started_at: `${fd.get('started_at')}:00`,
+        ended_at: ended_raw ? `${ended_raw}:00` : null,
+        ml_left: fd.get('ml_left') ? Number(fd.get('ml_left')) : null,
+        ml_right: fd.get('ml_right') ? Number(fd.get('ml_right')) : null,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onEditSaved(f);
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+editForms.med = (row) => {
+  const f = editShell(`
+    <label>When
+      <input type="datetime-local" name="when" required value="${isoToLocal(row.given_at)}">
+    </label>
+    <label>Medicine
+      <input type="text" name="name" required maxlength="120" value="${escapeHtml(row.name ?? '')}">
+    </label>
+    <div class="grid-2">
+      <label>Dose
+        <input type="number" name="dose" inputmode="decimal" min="0" max="10000" step="0.1" value="${row.dose ?? ''}">
+      </label>
+      <label>Unit
+        <input type="text" name="unit" maxlength="20" value="${escapeHtml(row.unit ?? '')}">
+      </label>
+    </div>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" value="${escapeHtml(row.notes ?? '')}">
+    </label>
+  `);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    try {
+      await api.patch(`/api/meds/${row.id}`, {
+        given_at: `${fd.get('when')}:00`,
+        name: fd.get('name').trim(),
+        dose: fd.get('dose') ? Number(fd.get('dose')) : null,
+        unit: (fd.get('unit') || '').trim() || null,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onEditSaved(f);
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+editForms.growth = (row) => {
+  const f = editShell(`
+    <label>When
+      <input type="datetime-local" name="when" required value="${isoToLocal(row.measured_at)}">
+    </label>
+    <p class="form-hint">Fill any combination — leave the rest blank.</p>
+    <div class="grid-2">
+      <label>Weight (kg)
+        <input type="number" name="weight_kg" inputmode="decimal" min="0" max="50" step="0.001" value="${row.weight_kg ?? ''}">
+      </label>
+      <label>Length (cm)
+        <input type="number" name="height_cm" inputmode="decimal" min="0" max="200" step="0.1" value="${row.height_cm ?? ''}">
+      </label>
+    </div>
+    <label>Head circumference (cm)
+      <input type="number" name="head_cm" inputmode="decimal" min="0" max="100" step="0.1" value="${row.head_cm ?? ''}">
+    </label>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" value="${escapeHtml(row.notes ?? '')}">
+    </label>
+  `);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    const weight = fd.get('weight_kg') ? Number(fd.get('weight_kg')) : null;
+    const height = fd.get('height_cm') ? Number(fd.get('height_cm')) : null;
+    const head = fd.get('head_cm') ? Number(fd.get('head_cm')) : null;
+    if (weight == null && height == null && head == null) {
+      onErr(f, new Error('Enter at least one measurement.'));
+      return;
+    }
+    try {
+      await api.patch(`/api/growths/${row.id}`, {
+        measured_at: `${fd.get('when')}:00`,
+        weight_kg: weight,
+        height_cm: height,
+        head_cm: head,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onEditSaved(f);
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+editForms.bath = (row) => {
+  const f = editShell(`
+    <label>When
+      <input type="datetime-local" name="when" required value="${isoToLocal(row.bathed_at)}">
+    </label>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" value="${escapeHtml(row.notes ?? '')}">
+    </label>
+  `);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    try {
+      await api.patch(`/api/baths/${row.id}`, {
+        bathed_at: `${fd.get('when')}:00`,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onEditSaved(f);
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+editForms.tummy = (row) => {
+  const f = editShell(`
+    <label>Started
+      <input type="datetime-local" name="started_at" required value="${isoToLocal(row.started_at)}">
+    </label>
+    <label>Ended
+      <input type="datetime-local" name="ended_at" value="${isoToLocal(row.ended_at)}">
+    </label>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" value="${escapeHtml(row.notes ?? '')}">
+    </label>
+  `);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    const ended_raw = fd.get('ended_at');
+    try {
+      await api.patch(`/api/tummy-times/${row.id}`, {
+        started_at: `${fd.get('started_at')}:00`,
+        ended_at: ended_raw ? `${ended_raw}:00` : null,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onEditSaved(f);
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+editForms.milestone = (row) => {
+  const f = editShell(`
+    <label>When
+      <input type="datetime-local" name="when" required value="${isoToLocal(row.reached_at)}">
+    </label>
+    <label>What happened
+      <input type="text" name="title" required maxlength="120" value="${escapeHtml(row.title ?? '')}">
+    </label>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" value="${escapeHtml(row.notes ?? '')}">
+    </label>
+  `);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    try {
+      await api.patch(`/api/milestones/${row.id}`, {
+        reached_at: `${fd.get('when')}:00`,
+        title: fd.get('title').trim(),
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onEditSaved(f);
     } catch (err) { onErr(f, err); }
   });
 };

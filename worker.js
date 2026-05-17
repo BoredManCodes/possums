@@ -354,6 +354,12 @@ const isIntOrNull = (v, min, max) =>
 const isNumOrNull = (v, min, max) =>
   v == null || (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max);
 
+const mergeDefined = (existing, b, fields) => {
+  const out = { ...existing };
+  for (const f of fields) if (f in b) out[f] = b[f];
+  return out;
+};
+
 const simple = {
   feeds: {
     key: 'feeds',
@@ -377,6 +383,18 @@ const simple = {
         notes: b.notes ?? null,
       };
     },
+    validatePatch(b) {
+      if (b.started_at !== undefined && !isStr(b.started_at, 10)) return 'bad started_at';
+      if (b.kind !== undefined && !FEED_KINDS.includes(b.kind)) return 'bad kind';
+      if (b.amount_ml !== undefined && !isIntOrNull(b.amount_ml, 0, 2000)) return 'bad amount_ml';
+      if (b.started_ml !== undefined && !isIntOrNull(b.started_ml, 0, 2000)) return 'bad started_ml';
+      if (b.duration_seconds !== undefined && !isIntOrNull(b.duration_seconds, 0, 36000)) return 'bad duration_seconds';
+      if (b.notes !== undefined && !isStrOrNull(b.notes, 500)) return 'bad notes';
+      return null;
+    },
+    applyPatch(existing, b) {
+      return mergeDefined(existing, b, ['started_at', 'kind', 'amount_ml', 'started_ml', 'duration_seconds', 'notes']);
+    },
   },
   nappies: {
     key: 'nappies',
@@ -388,6 +406,15 @@ const simple = {
       return null;
     },
     build(b) { return { changed_at: b.changed_at, kind: b.kind, notes: b.notes ?? null }; },
+    validatePatch(b) {
+      if (b.changed_at !== undefined && !isStr(b.changed_at, 10)) return 'bad changed_at';
+      if (b.kind !== undefined && !NAPPY_KINDS.includes(b.kind)) return 'bad kind';
+      if (b.notes !== undefined && !isStrOrNull(b.notes, 500)) return 'bad notes';
+      return null;
+    },
+    applyPatch(existing, b) {
+      return mergeDefined(existing, b, ['changed_at', 'kind', 'notes']);
+    },
   },
   spitups: {
     key: 'spitups',
@@ -399,6 +426,15 @@ const simple = {
       return null;
     },
     build(b) { return { happened_at: b.happened_at, kind: b.kind, notes: b.notes ?? null }; },
+    validatePatch(b) {
+      if (b.happened_at !== undefined && !isStr(b.happened_at, 10)) return 'bad happened_at';
+      if (b.kind !== undefined && !SPITUP_KINDS.includes(b.kind)) return 'bad kind';
+      if (b.notes !== undefined && !isStrOrNull(b.notes, 500)) return 'bad notes';
+      return null;
+    },
+    applyPatch(existing, b) {
+      return mergeDefined(existing, b, ['happened_at', 'kind', 'notes']);
+    },
   },
   meds: {
     key: 'meds',
@@ -416,6 +452,19 @@ const simple = {
         given_at: b.given_at, name: b.name.trim(),
         dose: b.dose ?? null, unit: b.unit ?? null, notes: b.notes ?? null,
       };
+    },
+    validatePatch(b) {
+      if (b.given_at !== undefined && !isStr(b.given_at, 10)) return 'bad given_at';
+      if (b.name !== undefined && !isStr(b.name, 1, 120)) return 'bad name';
+      if (b.dose !== undefined && !isNumOrNull(b.dose, 0, 10000)) return 'bad dose';
+      if (b.unit !== undefined && !isStrOrNull(b.unit, 20)) return 'bad unit';
+      if (b.notes !== undefined && !isStrOrNull(b.notes, 500)) return 'bad notes';
+      return null;
+    },
+    applyPatch(existing, b) {
+      const patched = mergeDefined(existing, b, ['given_at', 'name', 'dose', 'unit', 'notes']);
+      if (typeof patched.name === 'string') patched.name = patched.name.trim();
+      return patched;
     },
   },
   growths: {
@@ -438,6 +487,17 @@ const simple = {
         notes: b.notes ?? null,
       };
     },
+    validatePatch(b) {
+      if (b.measured_at !== undefined && !isStr(b.measured_at, 10)) return 'bad measured_at';
+      if (b.weight_kg !== undefined && !isNumOrNull(b.weight_kg, 0, 50)) return 'bad weight_kg';
+      if (b.height_cm !== undefined && !isNumOrNull(b.height_cm, 0, 200)) return 'bad height_cm';
+      if (b.head_cm !== undefined && !isNumOrNull(b.head_cm, 0, 100)) return 'bad head_cm';
+      if (b.notes !== undefined && !isStrOrNull(b.notes, 500)) return 'bad notes';
+      return null;
+    },
+    applyPatch(existing, b) {
+      return mergeDefined(existing, b, ['measured_at', 'weight_kg', 'height_cm', 'head_cm', 'notes']);
+    },
   },
   baths: {
     key: 'baths',
@@ -448,6 +508,14 @@ const simple = {
       return null;
     },
     build(b) { return { bathed_at: b.bathed_at, notes: b.notes ?? null }; },
+    validatePatch(b) {
+      if (b.bathed_at !== undefined && !isStr(b.bathed_at, 10)) return 'bad bathed_at';
+      if (b.notes !== undefined && !isStrOrNull(b.notes, 500)) return 'bad notes';
+      return null;
+    },
+    applyPatch(existing, b) {
+      return mergeDefined(existing, b, ['bathed_at', 'notes']);
+    },
   },
   milestones: {
     key: 'milestones',
@@ -459,6 +527,17 @@ const simple = {
       return null;
     },
     build(b) { return { reached_at: b.reached_at, title: b.title.trim(), notes: b.notes ?? null }; },
+    validatePatch(b) {
+      if (b.reached_at !== undefined && !isStr(b.reached_at, 10)) return 'bad reached_at';
+      if (b.title !== undefined && !isStr(b.title, 1, 120)) return 'bad title';
+      if (b.notes !== undefined && !isStrOrNull(b.notes, 500)) return 'bad notes';
+      return null;
+    },
+    applyPatch(existing, b) {
+      const patched = mergeDefined(existing, b, ['reached_at', 'title', 'notes']);
+      if (typeof patched.title === 'string') patched.title = patched.title.trim();
+      return patched;
+    },
   },
 };
 
@@ -508,6 +587,17 @@ const timed = {
         ml_left: b.ml_left ?? null, ml_right: b.ml_right ?? null, notes: b.notes ?? null,
       };
     },
+    validatePatch(b) {
+      if (b.started_at !== undefined && !isStr(b.started_at, 10)) return 'bad started_at';
+      if (b.ended_at !== undefined && b.ended_at !== null && !isStr(b.ended_at, 10)) return 'bad ended_at';
+      if (b.ml_left !== undefined && !isIntOrNull(b.ml_left, 0, 2000)) return 'bad ml_left';
+      if (b.ml_right !== undefined && !isIntOrNull(b.ml_right, 0, 2000)) return 'bad ml_right';
+      if (b.notes !== undefined && !isStrOrNull(b.notes, 500)) return 'bad notes';
+      return null;
+    },
+    applyPatch(existing, b) {
+      return mergeDefined(existing, b, ['started_at', 'ended_at', 'ml_left', 'ml_right', 'notes']);
+    },
     applyEnd(existing, b) {
       return {
         ...existing,
@@ -528,6 +618,15 @@ const timed = {
       return null;
     },
     buildStart(b) { return { started_at: b.started_at, ended_at: b.ended_at ?? null, notes: b.notes ?? null }; },
+    validatePatch(b) {
+      if (b.started_at !== undefined && !isStr(b.started_at, 10)) return 'bad started_at';
+      if (b.ended_at !== undefined && b.ended_at !== null && !isStr(b.ended_at, 10)) return 'bad ended_at';
+      if (b.notes !== undefined && !isStrOrNull(b.notes, 500)) return 'bad notes';
+      return null;
+    },
+    applyPatch(existing, b) {
+      return mergeDefined(existing, b, ['started_at', 'ended_at', 'notes']);
+    },
     applyEnd(existing, b) { return { ...existing, ended_at: b?.ended_at ?? nowSec() }; },
   },
 };
@@ -552,8 +651,20 @@ async function handleSimple(name, request, url, env, idStr) {
     }
     return new Response('Method not allowed', { status: 405 });
   }
+  const id = Number(idStr);
+  if (request.method === 'PATCH' && res.validatePatch) {
+    const b = await readBody(request);
+    if (!b) return badRequest('json required');
+    const err = res.validatePatch(b);
+    if (err) return badRequest(err);
+    const list = await readList(env, res.key);
+    const i = list.findIndex((r) => r.id === id);
+    if (i < 0) return json({ error: 'not found' }, { status: 404 });
+    list[i] = res.applyPatch(list[i], b);
+    await writeList(env, res.key, list);
+    return json(list[i]);
+  }
   if (request.method === 'DELETE') {
-    const id = Number(idStr);
     const list = await readList(env, res.key);
     const i = list.findIndex((r) => r.id === id);
     if (i < 0) return json({ error: 'not found' }, { status: 404 });
