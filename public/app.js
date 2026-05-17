@@ -1284,7 +1284,7 @@ forms.growth = () => {
     <p class="form-hint">Fill any combination — leave the rest blank.</p>
     <div class="grid-2">
       <label>Weight (kg)
-        <input type="number" name="weight_kg" inputmode="decimal" min="0" max="50" step="0.01" placeholder="optional">
+        <input type="number" name="weight_kg" inputmode="decimal" min="0" max="50" step="0.001" placeholder="optional">
       </label>
       <label>Length (cm)
         <input type="number" name="height_cm" inputmode="decimal" min="0" max="200" step="0.1" placeholder="optional">
