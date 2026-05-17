@@ -636,6 +636,178 @@ views.sleep = async () => {
 
 /* ---------- History view ---------- */
 
+/* ---------- charts (history) ---------- */
+
+const CHART_DAYS = 14;
+
+const bucketByDay = (items, tsField, valFn, days = CHART_DAYS) => {
+  const todayMs = todayStart().getTime();
+  const firstDay = todayMs - (days - 1) * 86400000;
+  const buckets = Array.from({ length: days }, (_, i) => {
+    const ts = firstDay + i * 86400000;
+    const d = new Date(ts);
+    return {
+      ts,
+      label: String(d.getDate()),
+      sub: d.toLocaleDateString([], { weekday: 'narrow' }),
+      val: 0,
+    };
+  });
+  items.forEach((it) => {
+    const t = new Date(it[tsField]).getTime();
+    const idx = Math.floor((t - firstDay) / 86400000);
+    if (idx >= 0 && idx < days) buckets[idx].val += valFn(it);
+  });
+  return buckets;
+};
+
+const bucketNapDuration = (naps, days = CHART_DAYS) => {
+  const todayMs = todayStart().getTime();
+  const firstDay = todayMs - (days - 1) * 86400000;
+  const now = Date.now();
+  const buckets = Array.from({ length: days }, (_, i) => {
+    const ts = firstDay + i * 86400000;
+    const d = new Date(ts);
+    return {
+      ts,
+      label: String(d.getDate()),
+      sub: d.toLocaleDateString([], { weekday: 'narrow' }),
+      val: 0,
+    };
+  });
+  naps.forEach((n) => {
+    const s = new Date(n.started_at).getTime();
+    const e = n.ended_at ? new Date(n.ended_at).getTime() : now;
+    for (let i = 0; i < days; i++) {
+      const dayStart = firstDay + i * 86400000;
+      const dayEnd = dayStart + 86400000;
+      const overlap = Math.max(0, Math.min(e, dayEnd) - Math.max(s, dayStart));
+      if (overlap > 0) buckets[i].val += overlap / 60000;
+    }
+  });
+  return buckets;
+};
+
+const chartCard = (title, buckets, opts) => {
+  const fmt = opts.fmt || ((v) => String(v));
+  const color = opts.color || 'var(--accent)';
+  const max = Math.max(1, ...buckets.map((b) => b.val));
+  const todayIdx = buckets.length - 1;
+  const W = 320, H = 140, padT = 12, padB = 30, padX = 8;
+  const innerW = W - padX * 2;
+  const innerH = H - padT - padB;
+  const slot = innerW / buckets.length;
+  const barW = Math.max(4, slot * 0.62);
+
+  const total = buckets.reduce((s, b) => s + b.val, 0);
+  const avg = total / buckets.length;
+  const today = buckets[todayIdx].val;
+
+  const bars = buckets.map((b, i) => {
+    const h = b.val > 0 ? Math.max(2, (b.val / max) * innerH) : 0;
+    const x = padX + slot * i + (slot - barW) / 2;
+    const y = padT + innerH - h;
+    const isToday = i === todayIdx;
+    const fill = isToday ? color : 'var(--surface-2)';
+    const labelY = padT + innerH + 14;
+    const numY = padT + innerH + 24;
+    return `
+      <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="${fill}"/>
+      <text x="${(x + barW / 2).toFixed(1)}" y="${labelY}" text-anchor="middle" class="chart__tick">${b.sub}</text>
+      <text x="${(x + barW / 2).toFixed(1)}" y="${numY}" text-anchor="middle" class="chart__tick chart__tick--num">${b.label}</text>
+    `;
+  }).join('');
+
+  const card = el(`<div class="card stack chart-card">
+    <div class="chart__head">
+      <div class="chart__title">${title}</div>
+      <div class="chart__meta">avg ${fmt(Math.round(avg))} · today ${fmt(Math.round(today))}</div>
+    </div>
+    <svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="${title}">
+      ${bars}
+    </svg>
+  </div>`);
+  return card;
+};
+
+const growthChartCard = (growths) => {
+  const series = [
+    { key: 'weight_kg', label: 'Weight', unit: 'kg', color: 'var(--growth)' },
+    { key: 'height_cm', label: 'Length', unit: 'cm', color: 'var(--feed)' },
+    { key: 'head_cm',   label: 'Head',   unit: 'cm', color: 'var(--sleep)' },
+  ];
+  const container = el(`<div class="stack"></div>`);
+  let drew = false;
+  series.forEach((s) => {
+    const points = growths
+      .filter((g) => g[s.key] != null)
+      .map((g) => ({ ts: new Date(g.measured_at).getTime(), val: g[s.key] }))
+      .sort((a, b) => a.ts - b.ts);
+    if (points.length === 0) return;
+    drew = true;
+    container.appendChild(lineChartCard(`${s.label} (${s.unit})`, points, { color: s.color, unit: s.unit }));
+  });
+  if (!drew) container.appendChild(el(`<div class="placeholder">No growth measurements yet.</div>`));
+  return container;
+};
+
+const lineChartCard = (title, points, opts) => {
+  const color = opts.color || 'var(--accent)';
+  const unit = opts.unit || '';
+  const W = 320, H = 140, padT = 18, padB = 22, padL = 30, padR = 10;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  const xs = points.map((p) => p.ts);
+  const ys = points.map((p) => p.val);
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const ymin = Math.min(...ys), ymax = Math.max(...ys);
+  const xspan = Math.max(1, xmax - xmin);
+  const yspan = Math.max(0.001, ymax - ymin);
+
+  const xAt = (t) => padL + (xspan === 0 ? innerW / 2 : ((t - xmin) / xspan) * innerW);
+  const yAt = (v) => padT + innerH - ((v - ymin) / yspan) * innerH;
+
+  const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${xAt(p.ts).toFixed(1)},${yAt(p.val).toFixed(1)}`).join(' ');
+  const dots = points.map((p) =>
+    `<circle cx="${xAt(p.ts).toFixed(1)}" cy="${yAt(p.val).toFixed(1)}" r="3" fill="${color}"/>`
+  ).join('');
+
+  const fmtDate = (t) => new Date(t).toLocaleDateString([], { day: 'numeric', month: 'short' });
+  const fmtVal = (v) => (Number.isInteger(v) ? v : v.toFixed(v < 10 ? 2 : 1));
+
+  const yMidVal = (ymin + ymax) / 2;
+  const yLabels = `
+    <text x="${padL - 6}" y="${(padT + 3).toFixed(1)}" text-anchor="end" class="chart__tick">${fmtVal(ymax)}</text>
+    <text x="${padL - 6}" y="${(yAt(yMidVal) + 3).toFixed(1)}" text-anchor="end" class="chart__tick">${fmtVal(yMidVal)}</text>
+    <text x="${padL - 6}" y="${(padT + innerH + 3).toFixed(1)}" text-anchor="end" class="chart__tick">${fmtVal(ymin)}</text>
+  `;
+  const xLabels = `
+    <text x="${padL}" y="${H - 6}" class="chart__tick">${fmtDate(xmin)}</text>
+    <text x="${W - padR}" y="${H - 6}" text-anchor="end" class="chart__tick">${fmtDate(xmax)}</text>
+  `;
+
+  const last = points[points.length - 1];
+  const first = points[0];
+  const delta = last.val - first.val;
+  const meta = points.length > 1
+    ? `${fmtVal(last.val)} ${unit} · ${delta >= 0 ? '+' : ''}${fmtVal(delta)} over ${points.length} entries`
+    : `${fmtVal(last.val)} ${unit}`;
+
+  return el(`<div class="card stack chart-card">
+    <div class="chart__head">
+      <div class="chart__title">${title}</div>
+      <div class="chart__meta">${meta}</div>
+    </div>
+    <svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="${title}">
+      ${yLabels}
+      ${xLabels}
+      <path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      ${dots}
+    </svg>
+  </div>`);
+};
+
 views.history = async () => {
   const FILTERS = [
     { k: 'all', label: 'All' },
@@ -654,6 +826,7 @@ views.history = async () => {
 
   const wrap = el(`<div class="stack">
     <div class="chips" id="hist-chips"></div>
+    <div id="hist-chart"></div>
     <div class="list" id="hist-list"></div>
   </div>`);
   app.replaceChildren(wrap);
@@ -669,6 +842,35 @@ views.history = async () => {
     return ev.kind === active;
   };
 
+  const renderChart = async () => {
+    const slot = wrap.querySelector('#hist-chart');
+    slot.replaceChildren();
+    if (active === 'feed') {
+      const feeds = await api.list('/api/feeds?limit=500');
+      const buckets = bucketByDay(feeds, 'started_at', (f) => f.amount_ml || 0);
+      slot.appendChild(chartCard('Drank per day', buckets, { color: 'var(--feed)', fmt: (v) => `${v} ml` }));
+    } else if (active === 'sleep') {
+      const naps = await api.list('/api/naps?limit=300');
+      const buckets = bucketNapDuration(naps);
+      slot.appendChild(chartCard('Slept per day', buckets, { color: 'var(--sleep)', fmt: (v) => fmtDuration(v * 60000) }));
+    } else if (active === 'nappy') {
+      const nappies = await api.list('/api/nappies?limit=500');
+      const buckets = bucketByDay(nappies, 'changed_at', () => 1);
+      slot.appendChild(chartCard('Nappies per day', buckets, { color: 'var(--nappy)', fmt: (v) => String(v) }));
+    } else if (active === 'pump') {
+      const pumps = await api.list('/api/pumps?limit=300');
+      const buckets = bucketByDay(pumps, 'started_at', (p) => (p.ml_left || 0) + (p.ml_right || 0));
+      slot.appendChild(chartCard('Pumped per day', buckets, { color: 'var(--pump)', fmt: (v) => `${v} ml` }));
+    } else if (active === 'spitup') {
+      const spitups = await api.list('/api/spitups?limit=300');
+      const buckets = bucketByDay(spitups, 'happened_at', () => 1);
+      slot.appendChild(chartCard('Spit-ups per day', buckets, { color: 'var(--spitup)', fmt: (v) => String(v) }));
+    } else if (active === 'growth') {
+      const growths = await api.list('/api/growths?limit=200');
+      slot.appendChild(growthChartCard(growths));
+    }
+  };
+
   const refresh = async () => {
     const events = await fetchUnified(100);
     const list = wrap.querySelector('#hist-list');
@@ -678,6 +880,7 @@ views.history = async () => {
     } else {
       list.replaceChildren(...filtered.map((ev) => renderEventRow(ev, { onChange: refresh })));
     }
+    renderChart();
   };
 
   chips.addEventListener('click', (e) => {

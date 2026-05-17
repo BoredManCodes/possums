@@ -422,6 +422,41 @@ label {
 .stat__trend--down { color: var(--danger); }
 .stat__trend--flat { color: var(--ink-dim); }
 
+/* Charts (history) */
+.chart-card { gap: 10px; }
+.chart__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+.chart__title {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+  font-weight: 700;
+}
+.chart__meta {
+  font-size: 0.78rem;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.chart__tick {
+  font-size: 9px;
+  fill: var(--ink-dim);
+  font-family: inherit;
+}
+.chart__tick--num {
+  fill: var(--ink-2);
+  font-weight: 600;
+}
+
 /* Live timer card */
 .live {
   background: var(--sleep-soft);
