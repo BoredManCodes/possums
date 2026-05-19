@@ -1866,7 +1866,7 @@ forms.temp = () => {
         <button type="button" class="seg__btn ${unit === 'F' ? 'is-on' : ''}" data-unit="F">°F</button>
       </div>
     </div>
-    <label>Temperature (<span id="temp-unit-lbl">°${unit}</span>)
+    <label><span>Temperature (<span id="temp-unit-lbl">°${unit}</span>)</span>
       <input type="number" name="temp" inputmode="decimal" required step="0.1" placeholder="${unit === 'F' ? 'e.g. 98.6' : 'e.g. 37.0'}">
     </label>
     <label>Notes
@@ -2327,7 +2327,7 @@ editForms.temp = (row) => {
         <button type="button" class="seg__btn ${unit === 'F' ? 'is-on' : ''}" data-unit="F">°F</button>
       </div>
     </div>
-    <label>Temperature (<span id="edit-temp-unit-lbl">°${unit}</span>)
+    <label><span>Temperature (<span id="edit-temp-unit-lbl">°${unit}</span>)</span>
       <input type="number" name="temp" inputmode="decimal" required step="0.1" value="${displayed.toFixed(1)}">
     </label>
     <label>Notes
