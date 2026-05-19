@@ -135,6 +135,7 @@ const ICONS = {
   tummy: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>`,
   milestone: `<svg viewBox="0 0 24 24"><path d="M12 3l2.6 5.5 6 .9-4.3 4.2 1 6L12 16.7 6.7 19.6l1-6L3.4 9.4l6-.9L12 3z"/></svg>`,
   spitup: `<svg viewBox="0 0 24 24"><path d="M5 7q7 6 14 0"/><path d="M9 13v4M12 13v6M15 13v4"/></svg>`,
+  temp: `<svg viewBox="0 0 24 24"><path d="M14 4a2 2 0 10-4 0v9.5a4 4 0 104 0V4z"/><circle cx="12" cy="17" r="1.6" fill="currentColor" stroke="none"/></svg>`,
 };
 
 const chipHtml = (kind) => {
@@ -170,9 +171,20 @@ const ACT = {
   bath:      { label: 'Bath',        icon: 'bath',      color: 'bath' },
   tummy:     { label: 'Tummy time',  icon: 'tummy',     color: 'tummy' },
   milestone: { label: 'Milestone',   icon: 'milestone', color: 'milestone' },
+  temp:      { label: 'Temperature', icon: 'temp',      color: 'temp' },
 };
 
-const SHEET_ORDER = ['bottle', 'breast', 'solid', 'sleep', 'nappy', 'spitup', 'pump', 'med', 'bath', 'tummy', 'growth', 'milestone'];
+const SHEET_ORDER = ['bottle', 'breast', 'solid', 'sleep', 'nappy', 'spitup', 'pump', 'med', 'temp', 'bath', 'tummy', 'growth', 'milestone'];
+
+const TEMP_UNIT_KEY = 'possums_temp_unit';
+const getTempUnit = () => (localStorage.getItem(TEMP_UNIT_KEY) === 'F' ? 'F' : 'C');
+const setTempUnit = (u) => localStorage.setItem(TEMP_UNIT_KEY, u === 'F' ? 'F' : 'C');
+const cToF = (c) => (c * 9) / 5 + 32;
+const fToC = (f) => ((f - 32) * 5) / 9;
+const fmtTemp = (c) => {
+  if (c == null || !Number.isFinite(c)) return '';
+  return getTempUnit() === 'F' ? `${cToF(c).toFixed(1)}°F` : `${c.toFixed(1)}°C`;
+};
 
 /* ---------- normalisers: API rows → unified events ---------- */
 
@@ -231,6 +243,10 @@ const SOURCES = [
   { ep: '/api/spitups', tf: 'happened_at', map: (s) => ({
       id: s.id, kind: 'spitup', ts: s.happened_at,
       title: `${KIND_LABELS[s.kind] ?? s.kind} spit-up`, ep: '/api/spitups', notes: s.notes, logged_by: s.logged_by, raw: s,
+    }) },
+  { ep: '/api/temps', tf: 'taken_at', map: (t) => ({
+      id: t.id, kind: 'temp', ts: t.taken_at,
+      title: fmtTemp(t.temp_c), ep: '/api/temps', notes: t.notes, logged_by: t.logged_by, raw: t,
     }) },
 ];
 
@@ -846,6 +862,7 @@ views.history = async () => {
     { k: 'tummy', label: 'Tummy' },
     { k: 'milestone', label: 'Milestone' },
     { k: 'spitup', label: 'Spit-up' },
+    { k: 'temp', label: 'Temp' },
   ];
   let active = 'all';
 
@@ -893,6 +910,17 @@ views.history = async () => {
     } else if (active === 'growth') {
       const growths = await api.list('/api/growths?limit=200');
       slot.appendChild(growthChartCard(growths));
+    } else if (active === 'temp') {
+      const temps = await api.list('/api/temps?limit=200');
+      const unit = getTempUnit();
+      const points = [...temps]
+        .map((t) => ({ ts: new Date(t.taken_at).getTime(), val: unit === 'F' ? cToF(t.temp_c) : t.temp_c }))
+        .sort((a, b) => a.ts - b.ts);
+      if (points.length === 0) {
+        slot.appendChild(el(`<div class="placeholder">No temperatures logged yet.</div>`));
+      } else {
+        slot.appendChild(lineChartCard(`Temperature (°${unit})`, points, { color: 'var(--temp)', unit: `°${unit}` }));
+      }
     }
   };
 
@@ -966,6 +994,7 @@ views.more = async () => {
       <h2 class="card__title">Activity types</h2>
       <div class="quick-grid" id="more-types"></div>
     </div>
+    <p class="footer-credit">Get your own website fully crafted from $79/month at <a href="https://bordertechsolutions.com.au" target="_blank" rel="noopener">Border Tech Solutions</a></p>
   </div>`);
   app.replaceChildren(wrap);
 
@@ -1824,6 +1853,66 @@ forms.spitup = () => {
   });
 };
 
+forms.temp = () => {
+  let unit = getTempUnit();
+  const f = formShell(`
+    <label>When
+      <input type="datetime-local" name="when" required value="${nowLocal()}">
+    </label>
+    <div>
+      <label style="margin-bottom:6px">Unit</label>
+      <div class="seg" id="temp-unit-seg">
+        <button type="button" class="seg__btn ${unit === 'C' ? 'is-on' : ''}" data-unit="C">°C</button>
+        <button type="button" class="seg__btn ${unit === 'F' ? 'is-on' : ''}" data-unit="F">°F</button>
+      </div>
+    </div>
+    <label>Temperature (<span id="temp-unit-lbl">°${unit}</span>)
+      <input type="number" name="temp" inputmode="decimal" required step="0.1" placeholder="${unit === 'F' ? 'e.g. 98.6' : 'e.g. 37.0'}">
+    </label>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" placeholder="optional">
+    </label>
+  `, {});
+  const tempInput = f.querySelector('[name=temp]');
+  const unitLbl = f.querySelector('#temp-unit-lbl');
+  f.querySelectorAll('#temp-unit-seg .seg__btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      const next = b.dataset.unit;
+      const cur = tempInput.value ? Number(tempInput.value) : null;
+      if (cur != null && Number.isFinite(cur) && next !== unit) {
+        const conv = next === 'F' ? cToF(cur) : fToC(cur);
+        tempInput.value = conv.toFixed(1);
+      }
+      unit = next;
+      setTempUnit(unit);
+      unitLbl.textContent = `°${unit}`;
+      tempInput.placeholder = unit === 'F' ? 'e.g. 98.6' : 'e.g. 37.0';
+      f.querySelectorAll('#temp-unit-seg .seg__btn').forEach((x) => x.classList.toggle('is-on', x === b));
+    })
+  );
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    const raw = fd.get('temp');
+    if (!raw) { onErr(f, new Error('Enter a temperature.')); return; }
+    const n = Number(raw);
+    if (!Number.isFinite(n)) { onErr(f, new Error('Bad number.')); return; }
+    const temp_c = unit === 'F' ? fToC(n) : n;
+    if (temp_c < 25 || temp_c > 45) {
+      onErr(f, new Error(`Temperature out of range (25–45°C).`));
+      return;
+    }
+    try {
+      await api.post('/api/temps', {
+        taken_at: `${fd.get('when')}:00`,
+        temp_c: Math.round(temp_c * 100) / 100,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onSaved(f, 'Temperature saved.');
+    } catch (err) { onErr(f, err); }
+  });
+};
+
 /* ---------- edit forms (PATCH) ---------- */
 
 const isoToLocal = (iso) => (iso ? String(iso).slice(0, 16) : '');
@@ -2217,6 +2306,64 @@ editForms.tummy = (row) => {
       await api.patch(`/api/tummy-times/${row.id}`, {
         started_at: `${fd.get('started_at')}:00`,
         ended_at: ended_raw ? `${ended_raw}:00` : null,
+        notes: (fd.get('notes') || '').trim() || null,
+      });
+      onEditSaved(f);
+    } catch (err) { onErr(f, err); }
+  });
+};
+
+editForms.temp = (row) => {
+  let unit = getTempUnit();
+  const displayed = unit === 'F' ? cToF(row.temp_c) : row.temp_c;
+  const f = editShell(`
+    <label>When
+      <input type="datetime-local" name="when" required value="${isoToLocal(row.taken_at)}">
+    </label>
+    <div>
+      <label style="margin-bottom:6px">Unit</label>
+      <div class="seg" id="edit-temp-unit-seg">
+        <button type="button" class="seg__btn ${unit === 'C' ? 'is-on' : ''}" data-unit="C">°C</button>
+        <button type="button" class="seg__btn ${unit === 'F' ? 'is-on' : ''}" data-unit="F">°F</button>
+      </div>
+    </div>
+    <label>Temperature (<span id="edit-temp-unit-lbl">°${unit}</span>)
+      <input type="number" name="temp" inputmode="decimal" required step="0.1" value="${displayed.toFixed(1)}">
+    </label>
+    <label>Notes
+      <input type="text" name="notes" maxlength="500" value="${escapeHtml(row.notes ?? '')}">
+    </label>
+  `);
+  const tempInput = f.querySelector('[name=temp]');
+  const unitLbl = f.querySelector('#edit-temp-unit-lbl');
+  f.querySelectorAll('#edit-temp-unit-seg .seg__btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      const next = b.dataset.unit;
+      const cur = tempInput.value ? Number(tempInput.value) : null;
+      if (cur != null && Number.isFinite(cur) && next !== unit) {
+        const conv = next === 'F' ? cToF(cur) : fToC(cur);
+        tempInput.value = conv.toFixed(1);
+      }
+      unit = next;
+      setTempUnit(unit);
+      unitLbl.textContent = `°${unit}`;
+      f.querySelectorAll('#edit-temp-unit-seg .seg__btn').forEach((x) => x.classList.toggle('is-on', x === b));
+    })
+  );
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    const n = Number(fd.get('temp'));
+    if (!Number.isFinite(n)) { onErr(f, new Error('Bad number.')); return; }
+    const temp_c = unit === 'F' ? fToC(n) : n;
+    if (temp_c < 25 || temp_c > 45) {
+      onErr(f, new Error(`Temperature out of range (25–45°C).`));
+      return;
+    }
+    try {
+      await api.patch(`/api/temps/${row.id}`, {
+        taken_at: `${fd.get('when')}:00`,
+        temp_c: Math.round(temp_c * 100) / 100,
         notes: (fd.get('notes') || '').trim() || null,
       });
       onEditSaved(f);

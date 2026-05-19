@@ -539,6 +539,27 @@ const simple = {
       return patched;
     },
   },
+  temps: {
+    key: 'temps',
+    tf: 'taken_at',
+    validate(b) {
+      if (!isStr(b.taken_at, 10)) return 'taken_at required';
+      if (!isNumOrNull(b.temp_c, 25, 45) || b.temp_c == null) return 'bad temp_c';
+      if (!isStrOrNull(b.notes, 500)) return 'bad notes';
+      return null;
+    },
+    build(b) { return { taken_at: b.taken_at, temp_c: b.temp_c, notes: b.notes ?? null }; },
+    validatePatch(b) {
+      if (b.taken_at !== undefined && !isStr(b.taken_at, 10)) return 'bad taken_at';
+      if (b.temp_c !== undefined && !isNumOrNull(b.temp_c, 25, 45)) return 'bad temp_c';
+      if (b.temp_c === null) return 'bad temp_c';
+      if (b.notes !== undefined && !isStrOrNull(b.notes, 500)) return 'bad notes';
+      return null;
+    },
+    applyPatch(existing, b) {
+      return mergeDefined(existing, b, ['taken_at', 'temp_c', 'notes']);
+    },
+  },
 };
 
 const timed = {

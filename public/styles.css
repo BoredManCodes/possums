@@ -25,6 +25,7 @@ html, body { margin: 0; padding: 0; }
   --tummy: #e89260;  --tummy-soft: #fae0d0;  --tummy-ink: #964820;
   --milestone: #d4af3e; --milestone-soft: #f4e9c2; --milestone-ink: #76570c;
   --spitup: #b89aa0; --spitup-soft: #ede0e3; --spitup-ink: #6e4651;
+  --temp:   #d96e6e; --temp-soft:   #f7dcdc; --temp-ink:   #8a2f2f;
 
   --danger: #d64545;
   --ok: #6aa757;
@@ -423,6 +424,7 @@ label {
 .t-tummy     { background: var(--tummy-soft);     color: var(--tummy-ink); }
 .t-milestone { background: var(--milestone-soft); color: var(--milestone-ink); }
 .t-spitup    { background: var(--spitup-soft);    color: var(--spitup-ink); }
+.t-temp      { background: var(--temp-soft);      color: var(--temp-ink); }
 
 .stat--feed   { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--feed); }
 .stat--sleep  { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--sleep); }
@@ -726,4 +728,23 @@ details.advanced .stack { margin-top: 8px; }
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+/* Footer credit */
+.footer-credit {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+  padding: 8px 12px 4px;
+  line-height: 1.5;
+}
+.footer-credit a {
+  color: var(--ink-2);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+}
+.footer-credit a:hover {
+  color: var(--accent-deep);
+  border-bottom-color: currentColor;
 }
