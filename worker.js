@@ -11,6 +11,7 @@ const WHO_VALUES = ['parent1', 'parent2'];
 const PARENTS_KEY = 'config:parents';
 const AUTH_KEY = 'config:auth';
 const SECRET_KEY = 'config:session_secret';
+const NOTIFY_KEY = 'config:notify';
 const DEFAULT_PARENTS = { parent1: 'Parent 1', parent2: 'Parent 2' };
 const PBKDF2_ITERS = 100000;
 
@@ -26,6 +27,108 @@ const readParents = async (env) => {
   } catch { return { ...DEFAULT_PARENTS }; }
 };
 const writeParents = (env, obj) => env.POSSUMS_KV.put(PARENTS_KEY, JSON.stringify(obj));
+
+const readNotify = async (env) => {
+  const raw = await env.POSSUMS_KV.get(NOTIFY_KEY);
+  if (!raw) return { app_token: '', parent1: '', parent2: '' };
+  try {
+    const o = JSON.parse(raw);
+    return {
+      app_token: typeof o.app_token === 'string' ? o.app_token : '',
+      parent1: typeof o.parent1 === 'string' ? o.parent1 : '',
+      parent2: typeof o.parent2 === 'string' ? o.parent2 : '',
+    };
+  } catch { return { app_token: '', parent1: '', parent2: '' }; }
+};
+const writeNotify = (env, obj) => env.POSSUMS_KV.put(NOTIFY_KEY, JSON.stringify(obj));
+
+async function sendPushover(env, loggedBy, message) {
+  if (!loggedBy || !message) return;
+  const cfg = await readNotify(env);
+  if (!cfg.app_token) return;
+  const otherKey = loggedBy === 'parent1' ? cfg.parent2 : cfg.parent1;
+  if (!otherKey) return;
+  const parents = await readParents(env);
+  const title = parents[loggedBy] || (loggedBy === 'parent1' ? 'Parent 1' : 'Parent 2');
+  const body = new URLSearchParams({ token: cfg.app_token, user: otherKey, title, message });
+  try {
+    await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body });
+  } catch (err) {
+    console.log('pushover send failed', err);
+  }
+}
+
+const fireNotify = (env, ctx, loggedBy, message) => {
+  const p = sendPushover(env, loggedBy, message);
+  if (ctx?.waitUntil) ctx.waitUntil(p);
+};
+
+const fmtDur = (sec) => {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${s}s`;
+};
+
+const NAPPY_LABEL = { wet: 'wet', dirty: 'dirty', both: 'wet + dirty' };
+
+function summarizeFeed(f) {
+  if (f.kind === 'breast_l' || f.kind === 'breast_r') {
+    const side = f.kind === 'breast_l' ? 'left' : 'right';
+    const dur = f.duration_seconds ? ` for ${fmtDur(f.duration_seconds)}` : '';
+    return `Breastfed (${side})${dur}`;
+  }
+  if (f.kind === 'solid') {
+    return f.amount_ml != null ? `Gave ${f.amount_ml}g of solids` : 'Gave solids';
+  }
+  if (f.amount_ml != null && f.started_ml != null) return `Gave a ${f.amount_ml}ml bottle (offered ${f.started_ml}ml)`;
+  if (f.amount_ml != null) return `Gave a ${f.amount_ml}ml bottle`;
+  return 'Gave a bottle';
+}
+
+function summarizeSimple(name, row) {
+  switch (name) {
+    case 'feeds': return summarizeFeed(row);
+    case 'nappies': return `Changed a ${NAPPY_LABEL[row.kind] ?? row.kind} nappy`;
+    case 'spitups': return `Logged a ${row.kind} spit-up`;
+    case 'meds': {
+      const dose = row.dose != null ? ` ${row.dose}${row.unit ?? ''}` : '';
+      return `Gave ${row.name}${dose}`;
+    }
+    case 'growths': {
+      const parts = [];
+      if (row.weight_kg) parts.push(`${row.weight_kg}kg`);
+      if (row.height_cm) parts.push(`${row.height_cm}cm`);
+      if (row.head_cm) parts.push(`head ${row.head_cm}cm`);
+      return parts.length ? `Logged growth (${parts.join(', ')})` : 'Logged growth';
+    }
+    case 'baths': return 'Gave a bath';
+    case 'milestones': return `Milestone: ${row.title}`;
+    case 'temps': return `Took temperature (${row.temp_c.toFixed(1)}°C)`;
+  }
+  return 'Logged an activity';
+}
+
+function summarizeTimedStart(name) {
+  if (name === 'naps') return 'Started a sleep';
+  if (name === 'pumps') return 'Started pumping';
+  if (name === 'tummy_times') return 'Started tummy time';
+  return 'Started a timer';
+}
+
+function summarizeTimedEnd(name, row) {
+  const ms = new Date(row.ended_at).getTime() - new Date(row.started_at).getTime();
+  const dur = fmtDur(Math.floor(ms / 1000));
+  if (name === 'naps') return `Ended sleep (${dur})`;
+  if (name === 'pumps') {
+    const ml = (row.ml_left ?? 0) + (row.ml_right ?? 0);
+    return ml > 0 ? `Ended pumping (${dur}, ${ml}ml)` : `Ended pumping (${dur})`;
+  }
+  if (name === 'tummy_times') return `Ended tummy time (${dur})`;
+  return `Ended timer (${dur})`;
+}
 
 const escapeAttr = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -652,7 +755,7 @@ const timed = {
   },
 };
 
-async function handleSimple(name, request, url, env, idStr) {
+async function handleSimple(name, request, url, env, idStr, ctx) {
   const res = simple[name];
   if (!idStr) {
     if (request.method === 'GET') {
@@ -668,6 +771,7 @@ async function handleSimple(name, request, url, env, idStr) {
       const row = { id: nextId(list), ...res.build(b), logged_by: getWho(request), created_at: nowSec() };
       list.push(row);
       await writeList(env, res.key, list);
+      fireNotify(env, ctx, row.logged_by, summarizeSimple(name, row));
       return json(row, { status: 201 });
     }
     return new Response('Method not allowed', { status: 405 });
@@ -696,7 +800,7 @@ async function handleSimple(name, request, url, env, idStr) {
   return new Response('Method not allowed', { status: 405 });
 }
 
-async function handleTimed(name, request, url, env, idStr, sub) {
+async function handleTimed(name, request, url, env, idStr, sub, ctx) {
   const res = timed[name];
   if (!idStr) {
     if (request.method === 'GET') {
@@ -712,6 +816,11 @@ async function handleTimed(name, request, url, env, idStr, sub) {
       const row = { id: nextId(list), ...res.buildStart(b), logged_by: getWho(request), created_at: nowSec() };
       list.push(row);
       await writeList(env, res.key, list);
+      if (row.ended_at == null) {
+        fireNotify(env, ctx, row.logged_by, summarizeTimedStart(name));
+      } else {
+        fireNotify(env, ctx, row.logged_by, summarizeTimedEnd(name, row));
+      }
       return json(row, { status: 201 });
     }
     return new Response('Method not allowed', { status: 405 });
@@ -731,6 +840,7 @@ async function handleTimed(name, request, url, env, idStr, sub) {
     }
     list[i] = res.applyEnd(list[i], b);
     await writeList(env, res.key, list);
+    fireNotify(env, ctx, getWho(request) ?? list[i].logged_by, summarizeTimedEnd(name, list[i]));
     return json(list[i]);
   }
   if (request.method === 'PATCH' && res.validatePatch) {
@@ -765,7 +875,7 @@ const readBottleTimer = async (env) => {
   try { return JSON.parse(raw); } catch { return null; }
 };
 
-async function handleBottleTimer(request, env, action) {
+async function handleBottleTimer(request, env, action, ctx) {
   if (!action) {
     if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
     return json(await readBottleTimer(env));
@@ -784,6 +894,10 @@ async function handleBottleTimer(request, env, action) {
       created_at: nowSec(),
     };
     await env.POSSUMS_KV.put(BOTTLE_TIMER_KEY, JSON.stringify(row));
+    const startedMsg = row.started_ml != null
+      ? `Started a bottle (offered ${row.started_ml}ml)`
+      : 'Started a bottle';
+    fireNotify(env, ctx, row.logged_by, startedMsg);
     return json(row, { status: 201 });
   }
   if (action === 'end' && request.method === 'POST') {
@@ -812,6 +926,8 @@ async function handleBottleTimer(request, env, action) {
     feeds.push(row);
     await writeList(env, 'feeds', feeds);
     await env.POSSUMS_KV.delete(BOTTLE_TIMER_KEY);
+    const dur = ` over ${fmtDur(duration_seconds)}`;
+    fireNotify(env, ctx, row.logged_by, summarizeFeed(row) + dur);
     return json(row, { status: 201 });
   }
   if (action === 'cancel' && request.method === 'POST') {
@@ -844,20 +960,70 @@ async function handleMe(request, env) {
   return json({ who, name: who ? parents[who] : null, parents });
 }
 
-async function handleApi(request, url, env) {
+async function handleNotify(request, env) {
+  if (request.method === 'GET') {
+    return json(await readNotify(env));
+  }
+  if (request.method === 'PUT') {
+    const b = await readBody(request);
+    if (!b) return badRequest('json required');
+    const next = {
+      app_token: String(b.app_token ?? '').trim(),
+      parent1: String(b.parent1 ?? '').trim(),
+      parent2: String(b.parent2 ?? '').trim(),
+    };
+    if (next.app_token.length > 60 || next.parent1.length > 60 || next.parent2.length > 60) {
+      return badRequest('values must be 60 characters or fewer');
+    }
+    await writeNotify(env, next);
+    return json(next);
+  }
+  return new Response('Method not allowed', { status: 405 });
+}
+
+async function handleNotifyTest(request, env) {
+  if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  const who = getWho(request);
+  if (!who) return json({ error: 'not signed in' }, { status: 401 });
+  const cfg = await readNotify(env);
+  if (!cfg.app_token) return badRequest('app token not configured');
+  const myKey = cfg[who];
+  if (!myKey) return badRequest('your user key is not configured');
+  const parents = await readParents(env);
+  const body = new URLSearchParams({
+    token: cfg.app_token,
+    user: myKey,
+    title: 'Possums test',
+    message: `Hello ${parents[who]} — Pushover is wired up correctly.`,
+  });
+  try {
+    const r = await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body });
+    const text = await r.text();
+    if (!r.ok) return json({ error: `Pushover ${r.status}: ${text}` }, { status: 502 });
+    return json({ ok: true });
+  } catch (err) {
+    return json({ error: String(err) }, { status: 502 });
+  }
+}
+
+async function handleApi(request, url, env, ctx) {
   const parts = url.pathname.split('/').filter(Boolean);
   if (parts[1] === 'health') return json({ ok: true, db: 'kv' });
   if (parts[1] === 'parents') return handleParents(request, env);
   if (parts[1] === 'me') return handleMe(request, env);
   if (parts[1] === 'auth' && parts[2] === 'password') return handleChangePassword(request, env);
-  if (parts[1] === 'bottle-timer') return handleBottleTimer(request, env, parts[2]);
-  if (simple[parts[1]]) return handleSimple(parts[1], request, url, env, parts[2]);
-  if (TIMED_PATHS[parts[1]]) return handleTimed(TIMED_PATHS[parts[1]], request, url, env, parts[2], parts[3]);
+  if (parts[1] === 'notify') {
+    if (parts[2] === 'test') return handleNotifyTest(request, env);
+    return handleNotify(request, env);
+  }
+  if (parts[1] === 'bottle-timer') return handleBottleTimer(request, env, parts[2], ctx);
+  if (simple[parts[1]]) return handleSimple(parts[1], request, url, env, parts[2], ctx);
+  if (TIMED_PATHS[parts[1]]) return handleTimed(TIMED_PATHS[parts[1]], request, url, env, parts[2], parts[3], ctx);
   return json({ error: 'not found' }, { status: 404 });
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (url.pathname === '/setup') return handleSetup(request, env, url);
@@ -888,7 +1054,7 @@ export default {
       return new Response(null, { status: 302, headers: { Location: '/login' } });
     }
 
-    if (url.pathname.startsWith('/api/')) return handleApi(request, url, env);
+    if (url.pathname.startsWith('/api/')) return handleApi(request, url, env, ctx);
 
     return env.ASSETS.fetch(request);
   },

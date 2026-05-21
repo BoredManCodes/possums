@@ -951,7 +951,10 @@ views.history = async () => {
 
 views.more = async () => {
   await loadMe();
-  const health = await fetch('/api/health').then((r) => r.json()).catch(() => ({}));
+  const [health, notify] = await Promise.all([
+    fetch('/api/health').then((r) => r.json()).catch(() => ({})),
+    fetch('/api/notify').then((r) => r.json()).catch(() => ({ app_token: '', parent1: '', parent2: '' })),
+  ]);
   const signedAs = me.who ? me.parents[me.who] : 'not signed in';
   const wrap = el(`<div class="stack">
     <div class="card stack">
@@ -974,6 +977,24 @@ views.more = async () => {
         <input type="text" name="parent2" maxlength="60" required value="${escapeHtml(me.parents.parent2)}">
       </label>
       <button type="submit" class="btn">Save names</button>
+      <p class="form-msg" hidden></p>
+    </form>
+    <form class="card stack" id="notify-form">
+      <h2 class="card__title">Pushover notifications</h2>
+      <p class="row__sub">When one parent logs an activity, the other parent gets a Pushover push describing what happened. Create an application at <a href="https://pushover.net/apps/build" target="_blank" rel="noopener">pushover.net/apps/build</a> for the token, then grab each parent's user key from their Pushover dashboard. Leave a key blank to skip that parent.</p>
+      <label>Application API token
+        <input type="text" name="app_token" maxlength="60" placeholder="paste the application token" value="${escapeHtml(notify.app_token || '')}">
+      </label>
+      <label>${escapeHtml(me.parents.parent1)} — Pushover user key
+        <input type="text" name="parent1" maxlength="60" placeholder="user key, blank to disable" value="${escapeHtml(notify.parent1 || '')}">
+      </label>
+      <label>${escapeHtml(me.parents.parent2)} — Pushover user key
+        <input type="text" name="parent2" maxlength="60" placeholder="user key, blank to disable" value="${escapeHtml(notify.parent2 || '')}">
+      </label>
+      <div class="grid-2">
+        <button type="submit" class="btn">Save notifications</button>
+        <button type="button" class="btn btn--ghost" id="notify-test">Send test to me</button>
+      </div>
       <p class="form-msg" hidden></p>
     </form>
     <form class="card stack" id="password-form">
@@ -1024,6 +1045,40 @@ views.more = async () => {
       msg.classList.add('form-msg--err');
       msg.textContent = String(err.message || err);
       msg.hidden = false;
+    }
+  });
+
+  const notifyForm = wrap.querySelector('#notify-form');
+  notifyForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(notifyForm);
+    const msg = notifyForm.querySelector('.form-msg');
+    try {
+      await api.put('/api/notify', {
+        app_token: (fd.get('app_token') || '').toString().trim(),
+        parent1: (fd.get('parent1') || '').toString().trim(),
+        parent2: (fd.get('parent2') || '').toString().trim(),
+      });
+      msg.classList.remove('form-msg--err');
+      msg.textContent = 'Saved.';
+      msg.hidden = false;
+    } catch (err) {
+      msg.classList.add('form-msg--err');
+      msg.textContent = String(err.message || err);
+      msg.hidden = false;
+    }
+  });
+  notifyForm.querySelector('#notify-test').addEventListener('click', async () => {
+    const msg = notifyForm.querySelector('.form-msg');
+    msg.hidden = false;
+    msg.classList.remove('form-msg--err');
+    msg.textContent = 'Sending test…';
+    try {
+      await api.post('/api/notify/test', {});
+      msg.textContent = 'Test sent — check your Pushover.';
+    } catch (err) {
+      msg.classList.add('form-msg--err');
+      msg.textContent = String(err.message || err);
     }
   });
 
