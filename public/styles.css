@@ -430,6 +430,8 @@ label {
 .stat--sleep  { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--sleep); }
 .stat--nappy  { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--nappy); }
 .stat--growth { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--growth); }
+.stat--pump   { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--pump); }
+.stat--tummy  { box-shadow: var(--shadow-sm), inset 0 3px 0 var(--tummy); }
 
 .stat__trend {
   display: inline-flex;
@@ -440,6 +442,80 @@ label {
 .stat__trend--up   { color: var(--ok); }
 .stat__trend--down { color: var(--danger); }
 .stat__trend--flat { color: var(--ink-dim); }
+
+/* Quick-status bar (Today screen) */
+.qs-bar {
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  padding: 12px 4px;
+  display: flex;
+  align-items: center;
+  box-shadow: var(--shadow-sm);
+}
+.qs-bar__item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+}
+.qs-bar__label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.qs-bar__value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.qs-bar__sub {
+  font-size: 0.65rem;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+.qs-bar__sep {
+  width: 1px;
+  height: 36px;
+  background: var(--line);
+  flex-shrink: 0;
+}
+
+/* 7-day summary card (History screen) */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+.summary-item__label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-dim);
+  font-weight: 700;
+}
+.summary-item__value {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.summary-item__sub {
+  font-size: 0.72rem;
+  color: var(--ink-2);
+}
 
 /* Charts (history) */
 .chart-card { gap: 10px; }

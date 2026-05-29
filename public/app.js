@@ -371,6 +371,7 @@ const views = {};
 views.today = async () => {
   const wrap = el(`<div class="stack">
     <div id="today-live"></div>
+    <div id="today-qs"></div>
     <div class="stats" id="today-stats"></div>
     <section class="stack">
       <h2 class="section__title">Today</h2>
@@ -449,6 +450,43 @@ views.today = async () => {
     return node;
   };
 
+  const buildQuickStatus = ({ feeds, nappies }) => {
+    const allFeeds = [...feeds].sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+    const lastFeedTs = allFeeds.length ? allFeeds[0].started_at : null;
+
+    const allNappies = [...nappies].sort((a, b) => new Date(b.changed_at) - new Date(a.changed_at));
+    const lastNappyTs = allNappies.length ? allNappies[0].changed_at : null;
+
+    const todayMs = todayStart().getTime();
+    const feedTimesToday = feeds
+      .filter((f) => new Date(f.started_at).getTime() >= todayMs)
+      .map((f) => new Date(f.started_at).getTime())
+      .sort((a, b) => a - b);
+    const feedsToday = feedTimesToday.length;
+    let avgSub = '';
+    if (feedTimesToday.length >= 2) {
+      const avgMs = (feedTimesToday[feedTimesToday.length - 1] - feedTimesToday[0]) / (feedTimesToday.length - 1);
+      avgSub = `every ${fmtDuration(avgMs)}`;
+    }
+
+    const items = [
+      { label: 'Last feed',   value: lastFeedTs  ? relTime(lastFeedTs)  : '—' },
+      { label: 'Last nappy',  value: lastNappyTs ? relTime(lastNappyTs) : '—' },
+      { label: 'Feeds today', value: String(feedsToday), sub: avgSub },
+    ];
+    const bar = el(`<div class="qs-bar"></div>`);
+    items.forEach((item, i) => {
+      if (i > 0) bar.appendChild(el(`<div class="qs-bar__sep"></div>`));
+      const node = el(`<div class="qs-bar__item">
+        <span class="qs-bar__label">${item.label}</span>
+        <span class="qs-bar__value">${escapeHtml(item.value)}</span>
+        ${item.sub ? `<span class="qs-bar__sub">${escapeHtml(item.sub)}</span>` : ''}
+      </div>`);
+      bar.appendChild(node);
+    });
+    return bar;
+  };
+
   const buildTrendTiles = ({ feeds, nappies, naps, growths }) => {
     const now = Date.now();
     const todayMs = todayStart().getTime();
@@ -525,6 +563,20 @@ views.today = async () => {
     }
     tiles.push(statTile('Weight', growthValue, growthSub, 'growth', 'history'));
 
+    // Feeds count today + avg gap
+    const feedsCountToday = countIn(feeds, todayMs, now, 'started_at');
+    const feedsCountYday  = countIn(feeds, ydayStart, ydayEnd, 'started_at');
+    const feedTimesToday = feeds
+      .filter((f) => new Date(f.started_at).getTime() >= todayMs)
+      .map((f) => new Date(f.started_at).getTime())
+      .sort((a, b) => a - b);
+    let feedGapSub = trend(feedsCountToday, feedsCountYday, (n) => String(n));
+    if (feedTimesToday.length >= 2) {
+      const avgMs = (feedTimesToday[feedTimesToday.length - 1] - feedTimesToday[0]) / (feedTimesToday.length - 1);
+      feedGapSub = `every ${fmtDuration(avgMs)} avg`;
+    }
+    tiles.push(statTile('Feeds today', String(feedsCountToday), feedGapSub, 'bottle', 'history'));
+
     return tiles;
   };
 
@@ -540,6 +592,8 @@ views.today = async () => {
     ]);
 
     renderLive(currentNap, bottleTimer);
+
+    wrap.querySelector('#today-qs').replaceChildren(buildQuickStatus({ feeds, nappies }));
 
     const stats = wrap.querySelector('#today-stats');
     stats.replaceChildren(...buildTrendTiles({ feeds, nappies, naps, growths }));
@@ -892,7 +946,54 @@ views.history = async () => {
   const renderChart = async () => {
     const slot = wrap.querySelector('#hist-chart');
     slot.replaceChildren();
-    if (active === 'feed') {
+    if (active === 'all') {
+      const DAYS = 7;
+      const now = Date.now();
+      const weekStart = todayStart().getTime() - (DAYS - 1) * 86400000;
+      const inWeek = (ts) => new Date(ts).getTime() >= weekStart && new Date(ts).getTime() <= now;
+      const [feeds, nappies, naps, tummy] = await Promise.all([
+        api.list('/api/feeds?limit=500'),
+        api.list('/api/nappies?limit=500'),
+        api.list('/api/naps?limit=300'),
+        api.list('/api/tummy-times?limit=300'),
+      ]);
+      const feedsW  = feeds.filter((f) => inWeek(f.started_at));
+      const nappiesW = nappies.filter((n) => inWeek(n.changed_at));
+      const napsW   = naps.filter((n) => inWeek(n.started_at));
+      const tummyW  = tummy.filter((t) => inWeek(t.started_at));
+
+      const sleepMs = napsW.reduce((acc, n) => {
+        if (!n.ended_at) return acc;
+        return acc + (new Date(n.ended_at) - new Date(n.started_at));
+      }, 0);
+      const bottleMl = feedsW.filter((f) => f.kind === 'bottle' || !f.kind)
+        .reduce((acc, f) => acc + (f.amount_ml || 0), 0);
+      const tummyMs = tummyW.reduce((acc, t) => {
+        if (!t.ended_at) return acc;
+        return acc + (new Date(t.ended_at) - new Date(t.started_at));
+      }, 0);
+
+      const sumItem = (label, value, sub) => `
+        <div class="summary-item">
+          <span class="summary-item__label">${label}</span>
+          <span class="summary-item__value">${value}</span>
+          ${sub ? `<span class="summary-item__sub">${sub}</span>` : ''}
+        </div>`;
+
+      const card = el(`<div class="card stack">
+        <div class="chart__head">
+          <span class="chart__title">Last 7 days</span>
+        </div>
+        <div class="summary-grid">
+          ${sumItem('Feeds', String(feedsW.length), `avg ${(feedsW.length / DAYS).toFixed(1)}/day`)}
+          ${sumItem('Nappies', String(nappiesW.length), `avg ${(nappiesW.length / DAYS).toFixed(1)}/day`)}
+          ${sumItem('Sleep', sleepMs > 0 ? fmtDuration(sleepMs / DAYS) : '—', sleepMs > 0 ? 'avg per day' : '')}
+          ${sumItem('Bottle drank', bottleMl > 0 ? `${bottleMl} ml` : '—', bottleMl > 0 ? `avg ${Math.round(bottleMl / DAYS)} ml/day` : '')}
+          ${sumItem('Tummy time', tummyMs > 0 ? fmtDuration(tummyMs / DAYS) : '—', tummyMs > 0 ? 'avg per day' : '')}
+        </div>
+      </div>`);
+      slot.appendChild(card);
+    } else if (active === 'feed') {
       const feeds = await api.list('/api/feeds?limit=500');
       const buckets = bucketByDay(feeds, 'started_at', (f) => f.amount_ml || 0);
       slot.appendChild(chartCard('Drank per day', buckets, { color: 'var(--feed)', fmt: (v) => `${v} ml` }));
@@ -1016,6 +1117,27 @@ views.more = async () => {
       <button type="submit" class="btn">Update password</button>
       <p class="form-msg" hidden></p>
     </form>
+    <div class="card stack" id="export-card">
+      <h2 class="card__title">Export data</h2>
+      <p class="row__sub">Download all logged activity as a CSV file.</p>
+      <div class="chips" id="export-presets">
+        <button class="chip is-on" data-days="7">Last 7 days</button>
+        <button class="chip" data-days="30">Last 30 days</button>
+        <button class="chip" data-days="90">Last 90 days</button>
+        <button class="chip" data-days="0">All time</button>
+        <button class="chip" data-days="-1">Custom</button>
+      </div>
+      <div id="export-custom-range" class="stack" style="display:none">
+        <label>From
+          <input type="date" id="export-from">
+        </label>
+        <label>To
+          <input type="date" id="export-to">
+        </label>
+      </div>
+      <button class="btn" id="export-btn">Download CSV</button>
+      <p class="form-msg" hidden id="export-msg"></p>
+    </div>
     <div class="card stack">
       <h2 class="card__title">Activity types</h2>
       <div class="quick-grid" id="more-types"></div>
@@ -1109,6 +1231,131 @@ views.more = async () => {
     } catch (err) {
       msg.classList.add('form-msg--err');
       msg.textContent = String(err.message || err);
+    }
+  });
+
+  // Export
+  let exportDays = 7;
+  const exportMsg = wrap.querySelector('#export-msg');
+  const customRange = wrap.querySelector('#export-custom-range');
+  const presetChips = wrap.querySelector('#export-presets');
+
+  const today = new Date();
+  const isoDate = (d) => d.toISOString().slice(0, 10);
+  wrap.querySelector('#export-to').value = isoDate(today);
+  const sevenAgo = new Date(today); sevenAgo.setDate(today.getDate() - 6);
+  wrap.querySelector('#export-from').value = isoDate(sevenAgo);
+
+  presetChips.addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    exportDays = Number(chip.dataset.days);
+    presetChips.querySelectorAll('.chip').forEach((c) => c.classList.toggle('is-on', c === chip));
+    customRange.style.display = exportDays === -1 ? '' : 'none';
+  });
+
+  const toCSV = (rows, parents) => {
+    const TYPE_LABELS = {
+      feed: 'Feed', nappy: 'Nappy', sleep: 'Sleep', pump: 'Pump',
+      medicine: 'Medicine', growth: 'Growth', bath: 'Bath',
+      tummy_time: 'Tummy time', milestone: 'Milestone', spitup: 'Spit-up', temperature: 'Temperature',
+    };
+    const csvEsc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const details = (r) => {
+      if (r.type === 'feed') {
+        const parts = [];
+        if (r.kind) parts.push(r.kind);
+        if (r.amount_ml != null) parts.push(`${r.amount_ml} ml`);
+        if (r.started_ml != null) parts.push(`offered ${r.started_ml} ml`);
+        if (r.duration_seconds) parts.push(`${Math.round(r.duration_seconds / 60)} min`);
+        return parts.join(', ');
+      }
+      if (r.type === 'nappy') return r.kind ?? '';
+      if (r.type === 'sleep') {
+        if (!r.ended_at) return 'in progress';
+        const ms = new Date(r.ended_at) - new Date(r.started_at);
+        return fmtDuration(ms);
+      }
+      if (r.type === 'pump') {
+        const total = (r.ml_left || 0) + (r.ml_right || 0);
+        const dur = r.ended_at ? fmtDuration(new Date(r.ended_at) - new Date(r.started_at)) : '';
+        return [dur, total > 0 ? `${total} ml` : ''].filter(Boolean).join(', ');
+      }
+      if (r.type === 'medicine') {
+        const dose = r.dose != null ? ` ${r.dose}${r.unit ?? ''}` : '';
+        return `${r.name ?? ''}${dose}`;
+      }
+      if (r.type === 'growth') {
+        const parts = [];
+        if (r.weight_kg) parts.push(`${r.weight_kg} kg`);
+        if (r.height_cm) parts.push(`${r.height_cm} cm length`);
+        if (r.head_cm) parts.push(`${r.head_cm} cm head`);
+        return parts.join(', ');
+      }
+      if (r.type === 'tummy_time') {
+        if (!r.ended_at) return 'in progress';
+        return fmtDuration(new Date(r.ended_at) - new Date(r.started_at));
+      }
+      if (r.type === 'milestone') return r.title ?? '';
+      if (r.type === 'spitup') return r.kind ?? '';
+      if (r.type === 'temperature') return r.temp_c != null ? `${r.temp_c.toFixed(1)} °C` : '';
+      return '';
+    };
+    const header = ['Date', 'Time', 'Type', 'Details', 'Notes', 'Logged by'].map(csvEsc).join(',');
+    const dataRows = rows.map((r) => {
+      const d = new Date(r.ts);
+      const date = d.toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' });
+      const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const who = r.logged_by === 'parent1' ? parents.parent1 : r.logged_by === 'parent2' ? parents.parent2 : '';
+      return [date, time, TYPE_LABELS[r.type] ?? r.type, details(r), r.notes ?? '', who].map(csvEsc).join(',');
+    });
+    return [header, ...dataRows].join('\r\n');
+  };
+
+  wrap.querySelector('#export-btn').addEventListener('click', async () => {
+    const btn = wrap.querySelector('#export-btn');
+    btn.disabled = true;
+    exportMsg.hidden = true;
+    try {
+      let from = '';
+      let to = '';
+      if (exportDays === -1) {
+        from = wrap.querySelector('#export-from').value;
+        to = wrap.querySelector('#export-to').value;
+      } else if (exportDays > 0) {
+        const t = new Date(); t.setHours(23, 59, 59, 999);
+        const f = new Date(); f.setDate(f.getDate() - (exportDays - 1)); f.setHours(0, 0, 0, 0);
+        from = isoDate(f);
+        to = isoDate(t);
+      }
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      const rows = await api.list(`/api/export?${params}`);
+      if (rows.length === 0) {
+        exportMsg.classList.remove('form-msg--err');
+        exportMsg.textContent = 'No data in that range.';
+        exportMsg.hidden = false;
+        return;
+      }
+      const csv = toCSV(rows, me.parents);
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const label = from && to ? `${from}_to_${to}` : 'all';
+      a.href = url;
+      a.download = `possums_${label}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      exportMsg.classList.remove('form-msg--err');
+      exportMsg.textContent = `Exported ${rows.length} records.`;
+      exportMsg.hidden = false;
+    } catch (err) {
+      exportMsg.classList.add('form-msg--err');
+      exportMsg.textContent = String(err.message || err);
+      exportMsg.hidden = false;
+    } finally {
+      btn.disabled = false;
     }
   });
 };

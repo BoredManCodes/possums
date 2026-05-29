@@ -1006,9 +1006,49 @@ async function handleNotifyTest(request, env) {
   }
 }
 
+async function handleExport(request, env, url) {
+  if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
+  const fromStr = url.searchParams.get('from');
+  const toStr = url.searchParams.get('to');
+  const fromMs = fromStr ? new Date(fromStr).getTime() : 0;
+  const toMs = toStr ? new Date(toStr + 'T23:59:59.999Z').getTime() : Infinity;
+  const inRange = (ts) => {
+    const t = new Date(ts).getTime();
+    return t >= fromMs && (toMs === Infinity || t <= toMs);
+  };
+  const [feeds, nappies, naps, pumps, meds, growths, baths, tummyTimes, milestones, spitups, temps] = await Promise.all([
+    readList(env, 'feeds'),
+    readList(env, 'nappies'),
+    readList(env, 'naps'),
+    readList(env, 'pumps'),
+    readList(env, 'meds'),
+    readList(env, 'growths'),
+    readList(env, 'baths'),
+    readList(env, 'tummy_times'),
+    readList(env, 'milestones'),
+    readList(env, 'spitups'),
+    readList(env, 'temps'),
+  ]);
+  const rows = [
+    ...feeds.filter((r) => inRange(r.started_at)).map((r) => ({ type: 'feed', ts: r.started_at, ...r })),
+    ...nappies.filter((r) => inRange(r.changed_at)).map((r) => ({ type: 'nappy', ts: r.changed_at, ...r })),
+    ...naps.filter((r) => inRange(r.started_at)).map((r) => ({ type: 'sleep', ts: r.started_at, ...r })),
+    ...pumps.filter((r) => inRange(r.started_at)).map((r) => ({ type: 'pump', ts: r.started_at, ...r })),
+    ...meds.filter((r) => inRange(r.given_at)).map((r) => ({ type: 'medicine', ts: r.given_at, ...r })),
+    ...growths.filter((r) => inRange(r.measured_at)).map((r) => ({ type: 'growth', ts: r.measured_at, ...r })),
+    ...baths.filter((r) => inRange(r.bathed_at)).map((r) => ({ type: 'bath', ts: r.bathed_at, ...r })),
+    ...tummyTimes.filter((r) => inRange(r.started_at)).map((r) => ({ type: 'tummy_time', ts: r.started_at, ...r })),
+    ...milestones.filter((r) => inRange(r.reached_at)).map((r) => ({ type: 'milestone', ts: r.reached_at, ...r })),
+    ...spitups.filter((r) => inRange(r.happened_at)).map((r) => ({ type: 'spitup', ts: r.happened_at, ...r })),
+    ...temps.filter((r) => inRange(r.taken_at)).map((r) => ({ type: 'temperature', ts: r.taken_at, ...r })),
+  ].sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+  return json(rows);
+}
+
 async function handleApi(request, url, env, ctx) {
   const parts = url.pathname.split('/').filter(Boolean);
   if (parts[1] === 'health') return json({ ok: true, db: 'kv' });
+  if (parts[1] === 'export') return handleExport(request, env, url);
   if (parts[1] === 'parents') return handleParents(request, env);
   if (parts[1] === 'me') return handleMe(request, env);
   if (parts[1] === 'auth' && parts[2] === 'password') return handleChangePassword(request, env);
