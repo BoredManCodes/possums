@@ -655,6 +655,8 @@ views.sleep = async () => {
 
   wrap.querySelector('#sleep-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.target.querySelector('[type=submit]');
+    if (btn) btn.disabled = true;
     const fd = new FormData(e.target);
     const ended_raw = fd.get('ended_at');
     const body = {
@@ -669,7 +671,10 @@ views.sleep = async () => {
       e.target.querySelector('[name=ended_at]').value = nowLocal();
       flash('Saved.');
       refresh();
-    } catch (err) { flash(`Failed: ${err.message}`, true); }
+    } catch (err) {
+      if (btn) btn.disabled = false;
+      flash(`Failed: ${err.message}`, true);
+    }
   });
 
   refresh();
@@ -1117,6 +1122,11 @@ const formShell = (innerHtml, opts) => {
     <p class="form-msg" hidden></p>
   </form>`);
   app.replaceChildren(node);
+  node.addEventListener('submit', (e) => {
+    const btn = node.querySelector('[type=submit]');
+    if (btn?.disabled) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    if (btn) btn.disabled = true;
+  });
   return node;
 };
 
@@ -1132,6 +1142,8 @@ const onErr = (form, err) => {
   m.classList.add('form-msg--err');
   m.textContent = `Failed: ${err.message}`;
   m.hidden = false;
+  const btn = form.querySelector('[type=submit]');
+  if (btn) btn.disabled = false;
 };
 
 const forms = {};
@@ -1400,6 +1412,8 @@ forms.bottle = () => {
 
   pastForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.target.querySelector('[type=submit]');
+    if (btn) btn.disabled = true;
     const fd = new FormData(e.target);
     const msgEl = e.target.querySelector('.form-msg');
     const when = `${fd.get('when')}:00`;
@@ -1416,6 +1430,7 @@ forms.bottle = () => {
       }
       showTab('today');
     } catch (err) {
+      if (btn) btn.disabled = false;
       msgEl.classList.add('form-msg--err');
       msgEl.textContent = `Failed: ${err.message}`;
       msgEl.hidden = false;
@@ -1625,6 +1640,8 @@ forms.pump = () => {
 
   wrap.querySelector('#pump-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.target.querySelector('[type=submit]');
+    if (btn) btn.disabled = true;
     const fd = new FormData(e.target);
     const ended_raw = fd.get('ended_at');
     try {
@@ -1637,6 +1654,7 @@ forms.pump = () => {
       });
       showTab('today');
     } catch (err) {
+      if (btn) btn.disabled = false;
       const m = e.target.querySelector('.form-msg');
       m.classList.add('form-msg--err');
       m.textContent = `Failed: ${err.message}`;
@@ -1823,6 +1841,8 @@ forms.tummy = () => {
 
   wrap.querySelector('#tummy-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.target.querySelector('[type=submit]');
+    if (btn) btn.disabled = true;
     const fd = new FormData(e.target);
     const ended_raw = fd.get('ended_at');
     try {
@@ -1833,6 +1853,7 @@ forms.tummy = () => {
       });
       showTab('today');
     } catch (err) {
+      if (btn) btn.disabled = false;
       const m = e.target.querySelector('.form-msg');
       m.classList.add('form-msg--err');
       m.textContent = `Failed: ${err.message}`;
@@ -1983,6 +2004,11 @@ const editShell = (innerHtml) => {
   </form>`);
   app.replaceChildren(node);
   node.querySelector('#edit-cancel').addEventListener('click', () => showTab(currentTab));
+  node.addEventListener('submit', (e) => {
+    const btn = node.querySelector('[type=submit]');
+    if (btn?.disabled) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    if (btn) btn.disabled = true;
+  });
   return node;
 };
 
