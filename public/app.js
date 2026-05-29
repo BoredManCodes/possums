@@ -504,20 +504,9 @@ views.today = async () => {
       return (t >= start && t <= end) ? acc + 1 : acc;
     }, 0);
 
-    const napOverlapMs = (n, winStart, winEnd) => {
-      const s = new Date(n.started_at).getTime();
-      const e = n.ended_at ? new Date(n.ended_at).getTime() : now;
-      return Math.max(0, Math.min(e, winEnd) - Math.max(s, winStart));
-    };
-    const sumNapMs = (winStart, winEnd) =>
-      naps.reduce((acc, n) => acc + napOverlapMs(n, winStart, winEnd), 0);
-
     const bottleFeeds = feeds.filter((f) => f.kind === 'bottle' || f.kind === undefined);
     const drankToday = sumMl(bottleFeeds, todayMs, now, 'started_at');
     const drankYday  = sumMl(bottleFeeds, ydayStart, ydayEnd, 'started_at');
-
-    const sleepToday = sumNapMs(todayMs, now);
-    const sleepYday  = sumNapMs(ydayStart, ydayEnd);
 
     const nappiesToday = countIn(nappies, todayMs, now, 'changed_at');
     const nappiesYday  = countIn(nappies, ydayStart, ydayEnd, 'changed_at');
@@ -533,12 +522,10 @@ views.today = async () => {
     };
 
     const drankValue = drankToday > 0 ? `${drankToday} ml` : '—';
-    const sleepValue = sleepToday > 0 ? fmtDuration(sleepToday) : '—';
     const nappiesValue = `${nappiesToday}`;
 
     const tiles = [
       statTile('Drank today', drankValue, trend(drankToday, drankYday, (n) => `${n} ml`), 'bottle', 'history'),
-      statTile('Slept today', sleepValue, trend(sleepToday, sleepYday, fmtDuration), 'sleep', 'sleep'),
       statTile('Nappies today', nappiesValue, trend(nappiesToday, nappiesYday, (n) => String(n)), 'nappy', 'history'),
     ];
 
