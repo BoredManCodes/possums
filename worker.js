@@ -12,6 +12,7 @@ const PARENTS_KEY = 'config:parents';
 const AUTH_KEY = 'config:auth';
 const SECRET_KEY = 'config:session_secret';
 const NOTIFY_KEY = 'config:notify';
+const BABY_KEY = 'config:baby';
 const DEFAULT_PARENTS = { parent1: 'Parent 1', parent2: 'Parent 2' };
 const PBKDF2_ITERS = 100000;
 
@@ -41,6 +42,19 @@ const readNotify = async (env) => {
   } catch { return { app_token: '', parent1: '', parent2: '' }; }
 };
 const writeNotify = (env, obj) => env.POSSUMS_KV.put(NOTIFY_KEY, JSON.stringify(obj));
+
+const readBaby = async (env) => {
+  const raw = await env.POSSUMS_KV.get(BABY_KEY);
+  if (!raw) return { dob: '', gender: '' };
+  try {
+    const o = JSON.parse(raw);
+    return {
+      dob: typeof o.dob === 'string' ? o.dob : '',
+      gender: o.gender === 'boy' || o.gender === 'girl' ? o.gender : '',
+    };
+  } catch { return { dob: '', gender: '' }; }
+};
+const writeBaby = (env, obj) => env.POSSUMS_KV.put(BABY_KEY, JSON.stringify(obj));
 
 async function sendPushover(env, loggedBy, message) {
   if (!loggedBy || !message) return;
@@ -953,6 +967,23 @@ async function handleParents(request, env) {
   return new Response('Method not allowed', { status: 405 });
 }
 
+async function handleBaby(request, env) {
+  if (request.method === 'GET') {
+    return json(await readBaby(env));
+  }
+  if (request.method === 'PUT') {
+    const b = await readBody(request);
+    if (!b) return badRequest('json required');
+    const dob = String(b.dob ?? '').trim();
+    const gender = String(b.gender ?? '').trim();
+    if (dob && !/^\d{4}-\d{2}-\d{2}$/.test(dob)) return badRequest('dob must be YYYY-MM-DD');
+    if (gender && gender !== 'boy' && gender !== 'girl') return badRequest('gender must be boy or girl');
+    await writeBaby(env, { dob, gender });
+    return json({ dob, gender });
+  }
+  return new Response('Method not allowed', { status: 405 });
+}
+
 async function handleMe(request, env) {
   if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
   const who = getWho(request);
@@ -1050,6 +1081,7 @@ async function handleApi(request, url, env, ctx) {
   if (parts[1] === 'health') return json({ ok: true, db: 'kv' });
   if (parts[1] === 'export') return handleExport(request, env, url);
   if (parts[1] === 'parents') return handleParents(request, env);
+  if (parts[1] === 'baby') return handleBaby(request, env);
   if (parts[1] === 'me') return handleMe(request, env);
   if (parts[1] === 'auth' && parts[2] === 'password') return handleChangePassword(request, env);
   if (parts[1] === 'notify') {

@@ -186,6 +186,68 @@ const fmtTemp = (c) => {
   return getTempUnit() === 'F' ? `${cToF(c).toFixed(1)}°F` : `${c.toFixed(1)}°C`;
 };
 
+/* ---------- WHO weight-for-age percentile (LMS method, 0-24 months) ---------- */
+
+const WHO_LMS = {
+  boy: [
+    [0.3487,3.3464,0.14602],[0.2297,4.4709,0.13395],[0.1970,5.5675,0.12385],
+    [0.1738,6.3762,0.11727],[0.1553,7.0023,0.11316],[0.1395,7.5105,0.11099],
+    [0.1257,7.9340,0.11000],[0.1134,8.2970,0.10959],[0.1021,8.6151,0.10941],
+    [0.0917,8.9014,0.10919],[0.0822,9.1649,0.10901],[0.0732,9.4122,0.10894],
+    [0.0648,9.6479,0.10885],[0.0569,9.8749,0.10861],[0.0493,10.0953,0.10850],
+    [0.0422,10.3108,0.10847],[0.0353,10.5228,0.10832],[0.0287,10.7319,0.10815],
+    [0.0224,10.9385,0.10795],[0.0164,11.1430,0.10772],[0.0105,11.3462,0.10751],
+    [0.0050,11.5482,0.10728],[-0.0004,11.7491,0.10707],[-0.0057,11.9491,0.10685],
+    [-0.0108,12.1483,0.10664],
+  ],
+  girl: [
+    [0.3809,3.2322,0.14171],[0.1714,4.1873,0.13724],[0.1161,5.1282,0.13000],
+    [0.0942,5.8458,0.12619],[0.0810,6.4237,0.12402],[0.0725,6.8985,0.12274],
+    [0.0664,7.2970,0.12204],[0.0618,7.6422,0.12166],[0.0581,7.9487,0.12142],
+    [0.0550,8.2254,0.12124],[0.0523,8.4800,0.12107],[0.0499,8.7192,0.12099],
+    [0.0477,8.9481,0.12087],[0.0456,9.1699,0.12068],[0.0437,9.3862,0.12050],
+    [0.0418,9.5991,0.12032],[0.0400,9.8097,0.12011],[0.0384,10.0183,0.11988],
+    [0.0368,10.2255,0.11969],[0.0353,10.4315,0.11951],[0.0339,10.6366,0.11934],
+    [0.0326,10.8408,0.11914],[0.0313,11.0444,0.11897],[0.0301,11.2477,0.11882],
+    [0.0289,11.4506,0.11868],
+  ],
+};
+
+const normalCDF = (z) => {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const poly = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  const p = 1 - Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI) * poly;
+  return z >= 0 ? p : 1 - p;
+};
+
+const ordinal = (n) => {
+  const v = n % 100;
+  if (v >= 11 && v <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1: return `${n}st`;
+    case 2: return `${n}nd`;
+    case 3: return `${n}rd`;
+    default: return `${n}th`;
+  }
+};
+
+const calcWeightPercentile = (weightKg, measuredAt, dob, gender) => {
+  if (!weightKg || !measuredAt || !dob || !gender) return null;
+  const dobDate = new Date(dob);
+  const measDate = new Date(measuredAt);
+  if (isNaN(dobDate.getTime()) || isNaN(measDate.getTime())) return null;
+  const ageMonths = (measDate - dobDate) / (1000 * 60 * 60 * 24 * 30.4375);
+  if (ageMonths < 0) return null;
+  const idx = Math.min(Math.round(ageMonths), 24);
+  const lms = WHO_LMS[gender]?.[idx];
+  if (!lms) return null;
+  const [L, M, S] = lms;
+  const z = Math.abs(L) < 0.0001
+    ? Math.log(weightKg / M) / S
+    : (Math.pow(weightKg / M, L) - 1) / (L * S);
+  return Math.round(Math.max(0, Math.min(99, normalCDF(z) * 100)));
+};
+
 /* ---------- normalisers: API rows → unified events ---------- */
 
 const SOURCES = [
@@ -450,7 +512,7 @@ views.today = async () => {
     return node;
   };
 
-  const buildQuickStatus = ({ feeds, nappies }) => {
+  const buildQuickStatus = ({ feeds, nappies, growths, baby }) => {
     const allFeeds = [...feeds].sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
     const lastFeedTs = allFeeds.length ? allFeeds[0].started_at : null;
 
@@ -474,6 +536,14 @@ views.today = async () => {
       { label: 'Last nappy',  value: lastNappyTs ? relTime(lastNappyTs) : '—' },
       { label: 'Feeds today', value: String(feedsToday), sub: avgSub },
     ];
+
+    if (baby && baby.dob && baby.gender) {
+      const latestW = [...(growths || [])].sort((a, b) => new Date(b.measured_at) - new Date(a.measured_at)).find((g) => g.weight_kg != null);
+      if (latestW) {
+        const pct = calcWeightPercentile(latestW.weight_kg, latestW.measured_at, baby.dob, baby.gender);
+        if (pct !== null) items.push({ label: 'Wt %ile', value: ordinal(pct) });
+      }
+    }
     const bar = el(`<div class="qs-bar"></div>`);
     items.forEach((item, i) => {
       if (i > 0) bar.appendChild(el(`<div class="qs-bar__sep"></div>`));
@@ -568,7 +638,7 @@ views.today = async () => {
   };
 
   const refresh = async () => {
-    const [feeds, nappies, naps, growths, currentNap, bottleTimer, allEvents] = await Promise.all([
+    const [feeds, nappies, naps, growths, currentNap, bottleTimer, allEvents, baby] = await Promise.all([
       api.list('/api/feeds?limit=200'),
       api.list('/api/nappies?limit=200'),
       api.list('/api/naps?limit=100'),
@@ -576,11 +646,12 @@ views.today = async () => {
       api.list('/api/naps/current'),
       api.list('/api/bottle-timer'),
       fetchUnified(80),
+      fetch('/api/baby').then(handleAuth).then((r) => r.json()).catch(() => ({ dob: '', gender: '' })),
     ]);
 
     renderLive(currentNap, bottleTimer);
 
-    wrap.querySelector('#today-qs').replaceChildren(buildQuickStatus({ feeds, nappies }));
+    wrap.querySelector('#today-qs').replaceChildren(buildQuickStatus({ feeds, nappies, growths, baby }));
 
     const stats = wrap.querySelector('#today-stats');
     stats.replaceChildren(...buildTrendTiles({ feeds, nappies, naps, growths }));
@@ -1044,9 +1115,10 @@ views.history = async () => {
 
 views.more = async () => {
   await loadMe();
-  const [health, notify] = await Promise.all([
+  const [health, notify, baby] = await Promise.all([
     fetch('/api/health').then((r) => r.json()).catch(() => ({})),
     fetch('/api/notify').then((r) => r.json()).catch(() => ({ app_token: '', parent1: '', parent2: '' })),
+    fetch('/api/baby').then((r) => r.json()).catch(() => ({ dob: '', gender: '' })),
   ]);
   const signedAs = me.who ? me.parents[me.who] : 'not signed in';
   const wrap = el(`<div class="stack">
@@ -1070,6 +1142,22 @@ views.more = async () => {
         <input type="text" name="parent2" maxlength="60" required value="${escapeHtml(me.parents.parent2)}">
       </label>
       <button type="submit" class="btn">Save names</button>
+      <p class="form-msg" hidden></p>
+    </form>
+    <form class="card stack" id="baby-form">
+      <h2 class="card__title">Baby settings</h2>
+      <p class="row__sub">Date of birth and sex are used to calculate weight percentile from WHO growth standards.</p>
+      <label>Date of birth
+        <input type="date" name="dob" value="${escapeHtml(baby.dob || '')}">
+      </label>
+      <label>Sex
+        <select name="gender">
+          <option value="" ${!baby.gender ? 'selected' : ''}>Not set</option>
+          <option value="boy" ${baby.gender === 'boy' ? 'selected' : ''}>Boy</option>
+          <option value="girl" ${baby.gender === 'girl' ? 'selected' : ''}>Girl</option>
+        </select>
+      </label>
+      <button type="submit" class="btn">Save baby settings</button>
       <p class="form-msg" hidden></p>
     </form>
     <form class="card stack" id="notify-form">
@@ -1152,6 +1240,26 @@ views.more = async () => {
         parent2: (fd.get('parent2') || '').toString().trim(),
       });
       me.parents = next;
+      msg.classList.remove('form-msg--err');
+      msg.textContent = 'Saved.';
+      msg.hidden = false;
+    } catch (err) {
+      msg.classList.add('form-msg--err');
+      msg.textContent = String(err.message || err);
+      msg.hidden = false;
+    }
+  });
+
+  const babyForm = wrap.querySelector('#baby-form');
+  babyForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(babyForm);
+    const msg = babyForm.querySelector('.form-msg');
+    try {
+      await api.put('/api/baby', {
+        dob: (fd.get('dob') || '').toString().trim(),
+        gender: (fd.get('gender') || '').toString().trim(),
+      });
       msg.classList.remove('form-msg--err');
       msg.textContent = 'Saved.';
       msg.hidden = false;
