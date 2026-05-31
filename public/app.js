@@ -238,10 +238,16 @@ const calcWeightPercentile = (weightKg, measuredAt, dob, gender) => {
   if (isNaN(dobDate.getTime()) || isNaN(measDate.getTime())) return null;
   const ageMonths = (measDate - dobDate) / (1000 * 60 * 60 * 24 * 30.4375);
   if (ageMonths < 0) return null;
-  const idx = Math.min(Math.round(ageMonths), 24);
-  const lms = WHO_LMS[gender]?.[idx];
-  if (!lms) return null;
-  const [L, M, S] = lms;
+  const table = WHO_LMS[gender];
+  if (!table) return null;
+  const lo = Math.min(Math.floor(ageMonths), 24);
+  const hi = Math.min(lo + 1, 24);
+  const frac = ageMonths - lo;
+  const [L0, M0, S0] = table[lo];
+  const [L1, M1, S1] = table[hi];
+  const L = L0 + frac * (L1 - L0);
+  const M = M0 + frac * (M1 - M0);
+  const S = S0 + frac * (S1 - S0);
   const z = Math.abs(L) < 0.0001
     ? Math.log(weightKg / M) / S
     : (Math.pow(weightKg / M, L) - 1) / (L * S);
