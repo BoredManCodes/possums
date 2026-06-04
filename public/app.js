@@ -1870,17 +1870,30 @@ forms.nappy = () => {
         <button type="button" class="seg__btn" data-kind="both">Both</button>
       </div>
     </div>
+    <div>
+      <label style="margin-bottom:6px">Contents</label>
+      <div class="seg" id="diarrhoea-seg">
+        <button type="button" class="seg__btn" id="diarrhoea-btn">Diarrhoea</button>
+      </div>
+    </div>
     <label>Notes
       <input type="text" name="notes" maxlength="500" placeholder="optional">
     </label>
   `, {});
   let kind = 'wet';
-  f.querySelectorAll('.seg__btn').forEach((b) =>
+  f.querySelectorAll('#kind-seg .seg__btn').forEach((b) =>
     b.addEventListener('click', () => {
       kind = b.dataset.kind;
-      f.querySelectorAll('.seg__btn').forEach((x) => x.classList.toggle('is-on', x === b));
+      f.querySelectorAll('#kind-seg .seg__btn').forEach((x) => x.classList.toggle('is-on', x === b));
     })
   );
+  const diarrhoeaBtn = f.querySelector('#diarrhoea-btn');
+  const notesInput = f.querySelector('[name="notes"]');
+  diarrhoeaBtn.addEventListener('click', () => {
+    const on = diarrhoeaBtn.classList.toggle('is-on');
+    if (on) { notesInput.value = 'Diarrhoea'; }
+    else if (notesInput.value === 'Diarrhoea') { notesInput.value = ''; }
+  });
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(f);
@@ -2473,6 +2486,7 @@ editForms.solid = (row) => {
 };
 
 editForms.nappy = (row) => {
+  const isDiarrhoea = row.notes === 'Diarrhoea';
   const f = editShell(`
     <label>When
       <input type="datetime-local" name="when" required value="${isoToLocal(row.changed_at)}">
@@ -2483,6 +2497,12 @@ editForms.nappy = (row) => {
         <button type="button" class="seg__btn ${row.kind === 'wet' ? 'is-on' : ''}" data-kind="wet">Wet</button>
         <button type="button" class="seg__btn ${row.kind === 'dirty' ? 'is-on' : ''}" data-kind="dirty">Dirty</button>
         <button type="button" class="seg__btn ${row.kind === 'both' ? 'is-on' : ''}" data-kind="both">Both</button>
+      </div>
+    </div>
+    <div>
+      <label style="margin-bottom:6px">Contents</label>
+      <div class="seg" id="edit-diarrhoea-seg">
+        <button type="button" class="seg__btn ${isDiarrhoea ? 'is-on' : ''}" id="edit-diarrhoea-btn">Diarrhoea</button>
       </div>
     </div>
     <label>Notes
@@ -2496,6 +2516,13 @@ editForms.nappy = (row) => {
       f.querySelectorAll('#edit-kind-seg .seg__btn').forEach((x) => x.classList.toggle('is-on', x === b));
     })
   );
+  const editDiarrhoeaBtn = f.querySelector('#edit-diarrhoea-btn');
+  const editNotesInput = f.querySelector('[name="notes"]');
+  editDiarrhoeaBtn.addEventListener('click', () => {
+    const on = editDiarrhoeaBtn.classList.toggle('is-on');
+    if (on) { editNotesInput.value = 'Diarrhoea'; }
+    else if (editNotesInput.value === 'Diarrhoea') { editNotesInput.value = ''; }
+  });
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(f);
