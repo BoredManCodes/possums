@@ -262,9 +262,10 @@ const SOURCES = [
       const kind = isBreast ? 'breast' : (f.kind || 'bottle');
       let title;
       if (kind === 'bottle') {
-        if (f.amount_ml != null && f.started_ml != null) title = `${f.amount_ml}/${f.started_ml} ml bottle`;
-        else if (f.amount_ml != null) title = `${f.amount_ml} ml bottle`;
-        else title = 'Bottle';
+        const dur = f.duration_seconds ? ` · ${fmtDuration(f.duration_seconds * 1000)}` : '';
+        if (f.amount_ml != null && f.started_ml != null) title = `${f.amount_ml}/${f.started_ml} ml bottle${dur}`;
+        else if (f.amount_ml != null) title = `${f.amount_ml} ml bottle${dur}`;
+        else title = `Bottle${dur}`;
       } else if (kind === 'solid') title = f.amount_ml ? `${f.amount_ml} g solids` : 'Solids';
       else {
         const side = f.kind === 'breast_l' ? 'L' : 'R';
@@ -1521,6 +1522,9 @@ forms.bottle = () => {
             <button type="button" class="seg__btn" data-nappy="dirty">Dirty</button>
             <button type="button" class="seg__btn" data-nappy="both">Both</button>
           </div>
+          <div class="seg" id="past-bottle-nappy-diarrhoea" style="margin-top:4px">
+            <button type="button" class="seg__btn" id="past-diarrhoea-btn">Diarrhoea</button>
+          </div>
         </div>
         <label>Notes
           <input type="text" name="notes" maxlength="500" placeholder="optional">
@@ -1609,6 +1613,9 @@ forms.bottle = () => {
           <button type="button" class="seg__btn" data-nappy="wet">Wet</button>
           <button type="button" class="seg__btn" data-nappy="dirty">Dirty</button>
           <button type="button" class="seg__btn" data-nappy="both">Both</button>
+        </div>
+        <div class="seg" style="width:100%;max-width:320px;margin-top:4px">
+          <button type="button" class="seg__btn" id="bottle-diarrhoea-btn">Diarrhoea</button>
         </div>
 
         <button class="btn" id="end-bottle" style="margin-top:10px">End bottle</button>
@@ -1701,11 +1708,16 @@ forms.bottle = () => {
     });
 
     let nappyKind = 'none';
+    let nappyDiarrhoea = false;
     node.querySelector('#bottle-nappy').addEventListener('click', (e) => {
       const btn = e.target.closest('.seg__btn');
       if (!btn) return;
       nappyKind = btn.dataset.nappy;
       node.querySelectorAll('#bottle-nappy .seg__btn').forEach((x) => x.classList.toggle('is-on', x === btn));
+    });
+    node.querySelector('#bottle-diarrhoea-btn').addEventListener('click', () => {
+      nappyDiarrhoea = !nappyDiarrhoea;
+      node.querySelector('#bottle-diarrhoea-btn').classList.toggle('is-on', nappyDiarrhoea);
     });
 
     node.querySelector('#end-bottle').addEventListener('click', async (e) => {
@@ -1722,7 +1734,7 @@ forms.bottle = () => {
       try {
         await api.post('/api/bottle-timer/end', { amount_ml: drank });
         if (nappyKind !== 'none') {
-          await api.post('/api/nappies', { changed_at: nowLocalISO(), kind: nappyKind });
+          await api.post('/api/nappies', { changed_at: nowLocalISO(), kind: nappyKind, notes: nappyDiarrhoea ? 'Diarrhoea' : null });
         }
         showTab('today');
       } catch (err) {
@@ -1751,11 +1763,16 @@ forms.bottle = () => {
 
   const pastForm = wrap.querySelector('#bottle-past-form');
   let pastNappyKind = 'none';
+  let pastNappyDiarrhoea = false;
   pastForm.querySelector('#past-bottle-nappy').addEventListener('click', (e) => {
     const btn = e.target.closest('.seg__btn');
     if (!btn) return;
     pastNappyKind = btn.dataset.nappy;
     pastForm.querySelectorAll('#past-bottle-nappy .seg__btn').forEach((x) => x.classList.toggle('is-on', x === btn));
+  });
+  pastForm.querySelector('#past-diarrhoea-btn').addEventListener('click', () => {
+    pastNappyDiarrhoea = !pastNappyDiarrhoea;
+    pastForm.querySelector('#past-diarrhoea-btn').classList.toggle('is-on', pastNappyDiarrhoea);
   });
 
   pastForm.addEventListener('submit', async (e) => {
@@ -1774,7 +1791,7 @@ forms.bottle = () => {
         notes: (fd.get('notes') || '').trim() || null,
       });
       if (pastNappyKind !== 'none') {
-        await api.post('/api/nappies', { changed_at: when, kind: pastNappyKind });
+        await api.post('/api/nappies', { changed_at: when, kind: pastNappyKind, notes: pastNappyDiarrhoea ? 'Diarrhoea' : null });
       }
       showTab('today');
     } catch (err) {
