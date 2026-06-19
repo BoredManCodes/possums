@@ -13,6 +13,8 @@ const AUTH_KEY = 'config:auth';
 const SECRET_KEY = 'config:session_secret';
 const NOTIFY_KEY = 'config:notify';
 const BABY_KEY = 'config:baby';
+const RESET_TOKEN_KEY = 'reset_token';
+const RESET_COOLDOWN_KEY = 'reset_cooldown';
 const DEFAULT_PARENTS = { parent1: 'Parent 1', parent2: 'Parent 2' };
 const PBKDF2_ITERS = 100000;
 
@@ -269,6 +271,9 @@ const renderLoginHtml = (err = '', name = '') => `<!doctype html>
     .login__input { font: inherit; padding: 14px 16px; border: 1px solid #d8cfbf; border-radius: 14px; background: #fff; }
     .login__btn { font: inherit; padding: 14px; border-radius: 14px; border: 0; background: #2c2620; color: #fff; font-weight: 600; cursor: pointer; }
     .login__err { color: #b3261e; font-size: 14px; text-align: center; min-height: 1em; margin: 0; }
+    .login__forgot { font: inherit; font-size: 14px; background: none; border: 0; color: #6b6258; cursor: pointer; text-decoration: underline; padding: 4px; justify-self: center; }
+    .login__forgot:disabled { opacity: .5; cursor: default; }
+    .login__forgot-msg { font-size: 13px; text-align: center; min-height: 1em; margin: 0; color: #6b6258; }
   </style>
 </head>
 <body>
@@ -281,6 +286,25 @@ const renderLoginHtml = (err = '', name = '') => `<!doctype html>
         <button class="login__btn" type="submit">Sign in</button>
         <p class="login__err">${escapeAttr(err)}</p>
       </form>
+      <button class="login__forgot" id="forgotBtn" type="button">Forgot password?</button>
+      <p class="login__forgot-msg" id="forgotMsg"></p>
+      <script>
+        document.getElementById('forgotBtn').addEventListener('click', async function() {
+          const btn = this;
+          const msg = document.getElementById('forgotMsg');
+          btn.disabled = true;
+          msg.textContent = 'Sending…';
+          try {
+            const r = await fetch('/forgot', { method: 'POST' });
+            const j = await r.json();
+            msg.textContent = j.ok ? 'Reset link sent to Pushover.' : (j.error || 'Failed.');
+            if (!j.ok) btn.disabled = false;
+          } catch {
+            msg.textContent = 'Network error.';
+            btn.disabled = false;
+          }
+        });
+      </script>
     </div>
   </main>
 </body>
@@ -432,6 +456,129 @@ async function handleChangePassword(request, env) {
   const hash = await pbkdf2Hex(next, salt);
   await env.POSSUMS_KV.put(AUTH_KEY, JSON.stringify({ salt, hash, iters: PBKDF2_ITERS, alg: 'pbkdf2-sha256' }));
   return json({ ok: true });
+}
+
+async function handleForgot(request, env, url) {
+  if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  const last = await env.POSSUMS_KV.get(RESET_COOLDOWN_KEY);
+  if (last && Date.now() - Number(last) < 86400000) {
+    return json({ error: 'Reset link already sent today.' }, { status: 429 });
+  }
+  const cfg = await readNotify(env);
+  if (!cfg.app_token) return json({ error: 'Pushover not configured.' }, { status: 400 });
+  const targets = [cfg.parent1, cfg.parent2].filter(Boolean);
+  if (!targets.length) return json({ error: 'No Pushover user keys configured.' }, { status: 400 });
+  const token = randomHex(32);
+  await env.POSSUMS_KV.put(RESET_TOKEN_KEY, token, { expirationTtl: 3600 });
+  await env.POSSUMS_KV.put(RESET_COOLDOWN_KEY, String(Date.now()), { expirationTtl: 86400 });
+  const link = `${url.origin}/reset?token=${token}`;
+  for (const userKey of targets) {
+    const body = new URLSearchParams({
+      token: cfg.app_token, user: userKey,
+      title: 'Possums password reset',
+      message: `Tap to reset your password:\n${link}`,
+      url: link, url_title: 'Reset password',
+    });
+    try {
+      await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body });
+    } catch (err) {
+      console.log('pushover reset send failed', err);
+    }
+  }
+  return json({ ok: true });
+}
+
+const renderResetHtml = (parents, err = '') => `<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#fbf7f0">
+  <title>Possums – Reset password</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    body { background: #fbf7f0; }
+    .reset { min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
+    .reset__card { width: 100%; max-width: 320px; display: grid; gap: 16px; }
+    .reset__title { text-align: center; font-size: 24px; margin: 0; font-weight: 600; }
+    .reset__form { display: grid; gap: 12px; }
+    .reset__label { display: grid; gap: 6px; font-size: 14px; color: #6b6258; }
+    .reset__input, .reset__select { font: inherit; padding: 14px 16px; border: 1px solid #d8cfbf; border-radius: 14px; background: #fff; }
+    .reset__btn { font: inherit; padding: 14px; border-radius: 14px; border: 0; background: #2c2620; color: #fff; font-weight: 600; cursor: pointer; }
+    .reset__err { color: #b3261e; font-size: 14px; text-align: center; min-height: 1em; margin: 0; }
+  </style>
+</head>
+<body>
+  <main class="reset">
+    <div class="reset__card">
+      <h1 class="reset__title">Reset password</h1>
+      <form class="reset__form" method="post">
+        <label class="reset__label">Sign in as
+          <select class="reset__select" name="who">
+            <option value="parent1">${escapeAttr(parents.parent1)}</option>
+            <option value="parent2">${escapeAttr(parents.parent2)}</option>
+          </select>
+        </label>
+        <label class="reset__label">New password
+          <input class="reset__input" type="password" name="password" required minlength="6" autocomplete="new-password">
+        </label>
+        <label class="reset__label">Confirm password
+          <input class="reset__input" type="password" name="password2" required minlength="6" autocomplete="new-password">
+        </label>
+        <button class="reset__btn" type="submit">Reset password</button>
+        <p class="reset__err">${escapeAttr(err)}</p>
+      </form>
+    </div>
+  </main>
+</body>
+</html>`;
+
+async function handleReset(request, env, url) {
+  const token = url.searchParams.get('token') ?? '';
+  const stored = await env.POSSUMS_KV.get(RESET_TOKEN_KEY);
+  if (!token || !stored || token !== stored) {
+    return new Response(renderLoginHtml('Reset link is invalid or expired.'), {
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    });
+  }
+  const parents = await readParents(env);
+  if (request.method === 'GET') {
+    return new Response(renderResetHtml(parents), {
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    });
+  }
+  if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  const form = await request.formData();
+  const who = String(form.get('who') ?? '');
+  const password = String(form.get('password') ?? '');
+  const password2 = String(form.get('password2') ?? '');
+  if (!WHO_VALUES.includes(who)) {
+    return new Response(renderResetHtml(parents, 'Pick an account.'), {
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    });
+  }
+  if (password.length < 6) {
+    return new Response(renderResetHtml(parents, 'Password must be at least 6 characters.'), {
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    });
+  }
+  if (password !== password2) {
+    return new Response(renderResetHtml(parents, 'Passwords do not match.'), {
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    });
+  }
+  const salt = randomHex(16);
+  const hash = await pbkdf2Hex(password, salt);
+  await env.POSSUMS_KV.put(AUTH_KEY, JSON.stringify({ salt, hash, iters: PBKDF2_ITERS, alg: 'pbkdf2-sha256' }));
+  await env.POSSUMS_KV.delete(RESET_TOKEN_KEY);
+  const secret = await getSessionSecret(env);
+  const sessionToken = await signSession(secret);
+  const flags = cookieFlags(url);
+  const headers = new Headers({ Location: '/' });
+  headers.append('Set-Cookie', `${COOKIE_NAME}=${sessionToken}; Max-Age=${COOKIE_MAX_AGE}; ${flags}`);
+  headers.append('Set-Cookie', `${WHO_COOKIE}=${who}; Max-Age=${COOKIE_MAX_AGE}; ${flags}`);
+  return new Response(null, { status: 302, headers });
 }
 
 /* ---------- data layer ---------- */
@@ -1117,6 +1264,8 @@ export default {
       }
       return loginPage();
     }
+    if (url.pathname === '/forgot') return handleForgot(request, env, url);
+    if (url.pathname === '/reset') return handleReset(request, env, url);
     if (url.pathname === '/logout') return logoutResponse(url);
 
     if (!(await isAuthed(request, env))) {
