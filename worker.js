@@ -1159,18 +1159,18 @@ async function handleNotify(request, env) {
   return new Response('Method not allowed', { status: 405 });
 }
 
-async function handleNotifyTest(request, env) {
+async function handleNotifyTest(request, env, target) {
   if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
-  const who = getWho(request);
+  const who = WHO_VALUES.includes(target) ? target : getWho(request);
   if (!who) return json({ error: 'not signed in' }, { status: 401 });
   const cfg = await readNotify(env);
   if (!cfg.app_token) return badRequest('app token not configured');
-  const myKey = cfg[who];
-  if (!myKey) return badRequest('your user key is not configured');
+  const key = cfg[who];
+  if (!key) return badRequest('user key not configured for that parent');
   const parents = await readParents(env);
   const body = new URLSearchParams({
     token: cfg.app_token,
-    user: myKey,
+    user: key,
     title: 'Possums test',
     message: `Hello ${parents[who]} — Pushover is wired up correctly.`,
     sound: 'classical',
@@ -1233,7 +1233,7 @@ async function handleApi(request, url, env, ctx) {
   if (parts[1] === 'me') return handleMe(request, env);
   if (parts[1] === 'auth' && parts[2] === 'password') return handleChangePassword(request, env);
   if (parts[1] === 'notify') {
-    if (parts[2] === 'test') return handleNotifyTest(request, env);
+    if (parts[2] === 'test') return handleNotifyTest(request, env, parts[3]);
     return handleNotify(request, env);
   }
   if (parts[1] === 'bottle-timer') return handleBottleTimer(request, env, parts[2], ctx);

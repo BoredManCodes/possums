@@ -1179,9 +1179,10 @@ views.more = async () => {
       <label>${escapeHtml(me.parents.parent2)} — Pushover user key
         <input type="text" name="parent2" maxlength="60" placeholder="user key, blank to disable" value="${escapeHtml(notify.parent2 || '')}">
       </label>
+      <button type="submit" class="btn">Save notifications</button>
       <div class="grid-2">
-        <button type="submit" class="btn">Save notifications</button>
-        <button type="button" class="btn btn--ghost" id="notify-test">Send test to me</button>
+        <button type="button" class="btn btn--ghost notify-test" data-who="parent1">Test ${escapeHtml(me.parents.parent1)}</button>
+        <button type="button" class="btn btn--ghost notify-test" data-who="parent2">Test ${escapeHtml(me.parents.parent2)}</button>
       </div>
       <p class="form-msg" hidden></p>
     </form>
@@ -1297,18 +1298,20 @@ views.more = async () => {
       msg.hidden = false;
     }
   });
-  notifyForm.querySelector('#notify-test').addEventListener('click', async () => {
-    const msg = notifyForm.querySelector('.form-msg');
-    msg.hidden = false;
-    msg.classList.remove('form-msg--err');
-    msg.textContent = 'Sending test…';
-    try {
-      await api.post('/api/notify/test', {});
-      msg.textContent = 'Test sent — check your Pushover.';
-    } catch (err) {
-      msg.classList.add('form-msg--err');
-      msg.textContent = String(err.message || err);
-    }
+  notifyForm.querySelectorAll('.notify-test').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const msg = notifyForm.querySelector('.form-msg');
+      msg.hidden = false;
+      msg.classList.remove('form-msg--err');
+      msg.textContent = 'Sending test…';
+      try {
+        await api.post(`/api/notify/test/${btn.dataset.who}`, {});
+        msg.textContent = 'Test sent — check Pushover.';
+      } catch (err) {
+        msg.classList.add('form-msg--err');
+        msg.textContent = String(err.message || err);
+      }
+    });
   });
 
   const pwForm = wrap.querySelector('#password-form');
