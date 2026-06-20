@@ -66,7 +66,7 @@ async function sendPushover(env, loggedBy, message) {
   if (!otherKey) return;
   const parents = await readParents(env);
   const title = parents[loggedBy] || (loggedBy === 'parent1' ? 'Parent 1' : 'Parent 2');
-  const body = new URLSearchParams({ token: cfg.app_token, user: otherKey, title, message });
+  const body = new URLSearchParams({ token: cfg.app_token, user: otherKey, title, message, sound: 'classical' });
   try {
     await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body });
   } catch (err) {
@@ -477,7 +477,7 @@ async function handleForgot(request, env, url) {
       token: cfg.app_token, user: userKey,
       title: 'Possums password reset',
       message: `Tap to reset your password:\n${link}`,
-      url: link, url_title: 'Reset password',
+      url: link, url_title: 'Reset password', sound: 'classical',
     });
     try {
       await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body });
@@ -1173,6 +1173,7 @@ async function handleNotifyTest(request, env) {
     user: myKey,
     title: 'Possums test',
     message: `Hello ${parents[who]} — Pushover is wired up correctly.`,
+    sound: 'classical',
   });
   try {
     const r = await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body });
