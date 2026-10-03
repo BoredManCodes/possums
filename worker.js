@@ -11,7 +11,8 @@ const WHO_VALUES = ['parent1', 'parent2'];
 const PARENTS_KEY = 'config:parents';
 const AUTH_KEY = 'config:auth';
 const SECRET_KEY = 'config:session_secret';
-const NOTIFY_KEY = 'config:notify';
+const VAPID_KEY = 'config:vapid';
+const PUSH_SUBS_KEY = 'push:subs';
 const BABY_KEY = 'config:baby';
 const RESET_TOKEN_KEY = 'reset_token';
 const RESET_COOLDOWN_KEY = 'reset_cooldown';
@@ -31,20 +32,6 @@ const readParents = async (env) => {
 };
 const writeParents = (env, obj) => env.POSSUMS_KV.put(PARENTS_KEY, JSON.stringify(obj));
 
-const readNotify = async (env) => {
-  const raw = await env.POSSUMS_KV.get(NOTIFY_KEY);
-  if (!raw) return { app_token: '', parent1: '', parent2: '' };
-  try {
-    const o = JSON.parse(raw);
-    return {
-      app_token: typeof o.app_token === 'string' ? o.app_token : '',
-      parent1: typeof o.parent1 === 'string' ? o.parent1 : '',
-      parent2: typeof o.parent2 === 'string' ? o.parent2 : '',
-    };
-  } catch { return { app_token: '', parent1: '', parent2: '' }; }
-};
-const writeNotify = (env, obj) => env.POSSUMS_KV.put(NOTIFY_KEY, JSON.stringify(obj));
-
 const readBaby = async (env) => {
   const raw = await env.POSSUMS_KV.get(BABY_KEY);
   if (!raw) return { dob: '', gender: '' };
@@ -58,24 +45,142 @@ const readBaby = async (env) => {
 };
 const writeBaby = (env, obj) => env.POSSUMS_KV.put(BABY_KEY, JSON.stringify(obj));
 
-async function sendPushover(env, loggedBy, message) {
-  if (!loggedBy || !message) return;
-  const cfg = await readNotify(env);
-  if (!cfg.app_token) return;
-  const otherKey = loggedBy === 'parent1' ? cfg.parent2 : cfg.parent1;
-  if (!otherKey) return;
-  const parents = await readParents(env);
-  const title = parents[loggedBy] || (loggedBy === 'parent1' ? 'Parent 1' : 'Parent 2');
-  const body = new URLSearchParams({ token: cfg.app_token, user: otherKey, title, message, sound: 'classical' });
+const b64uEncode = (buf) => {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+const b64uDecode = (str) => {
+  const b64 = str.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (str.length % 4)) % 4);
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+};
+const concatBytes = (...arrs) => {
+  const out = new Uint8Array(arrs.reduce((n, a) => n + a.length, 0));
+  let off = 0;
+  for (const a of arrs) { out.set(a, off); off += a.length; }
+  return out;
+};
+const utf8 = (s) => new TextEncoder().encode(s);
+
+const getVapid = async (env) => {
+  const raw = await env.POSSUMS_KV.get(VAPID_KEY);
+  if (raw) {
+    try {
+      const o = JSON.parse(raw);
+      if (o.publicKey && o.privateJwk) return o;
+    } catch { /* regenerate below */ }
+  }
+  const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign']);
+  const publicKey = b64uEncode(await crypto.subtle.exportKey('raw', pair.publicKey));
+  const privateJwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+  const o = { publicKey, privateJwk };
+  await env.POSSUMS_KV.put(VAPID_KEY, JSON.stringify(o));
+  return o;
+};
+
+const readSubs = async (env) => {
+  const raw = await env.POSSUMS_KV.get(PUSH_SUBS_KEY);
+  const out = { parent1: [], parent2: [] };
+  if (!raw) return out;
   try {
-    await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body });
+    const o = JSON.parse(raw);
+    for (const who of WHO_VALUES) if (Array.isArray(o[who])) out[who] = o[who];
+  } catch { /* empty */ }
+  return out;
+};
+const writeSubs = (env, subs) => env.POSSUMS_KV.put(PUSH_SUBS_KEY, JSON.stringify(subs));
+
+const hkdf = async (salt, ikm, info, bytes) => {
+  const key = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, key, bytes * 8));
+};
+
+// RFC 8291 aes128gcm payload encryption.
+async function encryptPayload(sub, payload) {
+  const uaPublic = b64uDecode(sub.keys.p256dh);
+  const authSecret = b64uDecode(sub.keys.auth);
+  const eph = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const asPublic = new Uint8Array(await crypto.subtle.exportKey('raw', eph.publicKey));
+  const uaKey = await crypto.subtle.importKey('raw', uaPublic, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const ecdh = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: uaKey }, eph.privateKey, 256));
+  const prk = await hkdf(authSecret, ecdh, concatBytes(utf8('WebPush: info\0'), uaPublic, asPublic), 32);
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const cek = await hkdf(salt, prk, utf8('Content-Encoding: aes128gcm\0'), 16);
+  const nonce = await hkdf(salt, prk, utf8('Content-Encoding: nonce\0'), 12);
+  const aes = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['encrypt']);
+  const plain = concatBytes(utf8(payload), new Uint8Array([2]));
+  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, aes, plain));
+  const header = new Uint8Array(21);
+  header.set(salt, 0);
+  new DataView(header.buffer).setUint32(16, 4096);
+  header[20] = asPublic.length;
+  return concatBytes(header, asPublic, cipher);
+}
+
+async function vapidAuth(vapid, endpoint, subject) {
+  const aud = new URL(endpoint).origin;
+  const head = b64uEncode(utf8(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
+  const claims = b64uEncode(utf8(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: subject })));
+  const key = await crypto.subtle.importKey('jwk', vapid.privateJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, utf8(`${head}.${claims}`));
+  return `vapid t=${head}.${claims}.${b64uEncode(sig)}, k=${vapid.publicKey}`;
+}
+
+// status: 'ok', 'gone' (subscription dead, drop it) or 'error'.
+async function sendOnePush(vapid, sub, payload) {
+  try {
+    const body = await encryptPayload(sub, JSON.stringify(payload));
+    const r = await fetch(sub.endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: await vapidAuth(vapid, sub.endpoint, sub.subject || 'https://possums.invalid'),
+        'Content-Encoding': 'aes128gcm',
+        'Content-Type': 'application/octet-stream',
+        TTL: '86400',
+        Urgency: 'high',
+      },
+      body,
+    });
+    if (r.ok) return { status: 'ok' };
+    const text = await r.text().catch(() => '');
+    console.log('push send failed', r.status, text);
+    return { status: r.status === 404 || r.status === 410 ? 'gone' : 'error', detail: `${r.status} ${text}` };
   } catch (err) {
-    console.log('pushover send failed', err);
+    console.log('push send failed', err);
+    return { status: 'error', detail: String(err) };
   }
 }
 
+// Push to every device registered for the given parents; prunes dead subscriptions.
+async function pushToParents(env, whos, payload) {
+  const subs = await readSubs(env);
+  const targets = whos.flatMap((w) => subs[w].map((sub) => ({ who: w, sub })));
+  if (!targets.length) return { sent: 0, failed: 0, errors: [] };
+  const vapid = await getVapid(env);
+  const results = await Promise.all(targets.map((t) => sendOnePush(vapid, t.sub, payload)));
+  const dead = new Set(targets.filter((_, i) => results[i].status === 'gone').map((t) => t.sub.endpoint));
+  if (dead.size) {
+    for (const w of WHO_VALUES) subs[w] = subs[w].filter((x) => !dead.has(x.endpoint));
+    await writeSubs(env, subs);
+  }
+  return {
+    sent: results.filter((r) => r.status === 'ok').length,
+    failed: results.filter((r) => r.status !== 'ok').length,
+    errors: results.filter((r) => r.detail).map((r) => r.detail),
+  };
+}
+
+async function sendPush(env, loggedBy, message) {
+  if (!loggedBy || !message) return;
+  const other = loggedBy === 'parent1' ? 'parent2' : 'parent1';
+  const parents = await readParents(env);
+  const title = parents[loggedBy] || (loggedBy === 'parent1' ? 'Parent 1' : 'Parent 2');
+  await pushToParents(env, [other], { title, body: message, url: '/' });
+}
+
 const fireNotify = (env, ctx, loggedBy, message) => {
-  const p = sendPushover(env, loggedBy, message);
+  const p = sendPush(env, loggedBy, message).catch((err) => console.log('notify failed', err));
   if (ctx?.waitUntil) ctx.waitUntil(p);
 };
 
@@ -297,7 +402,7 @@ const renderLoginHtml = (err = '', name = '') => `<!doctype html>
           try {
             const r = await fetch('/forgot', { method: 'POST' });
             const j = await r.json();
-            msg.textContent = j.ok ? 'Reset link sent to Pushover.' : (j.error || 'Failed.');
+            msg.textContent = j.ok ? 'Reset link sent to your devices.' : (j.error || 'Failed.');
             if (!j.ok) btn.disabled = false;
           } catch {
             msg.textContent = 'Network error.';
@@ -464,27 +569,16 @@ async function handleForgot(request, env, url) {
   if (last && Date.now() - Number(last) < 86400000) {
     return json({ error: 'Reset link already sent today.' }, { status: 429 });
   }
-  const cfg = await readNotify(env);
-  if (!cfg.app_token) return json({ error: 'Pushover not configured.' }, { status: 400 });
-  const targets = [cfg.parent1, cfg.parent2].filter(Boolean);
-  if (!targets.length) return json({ error: 'No Pushover user keys configured.' }, { status: 400 });
+  const subs = await readSubs(env);
+  if (!subs.parent1.length && !subs.parent2.length) {
+    return json({ error: 'No devices have notifications enabled.' }, { status: 400 });
+  }
   const token = randomHex(32);
+  const link = `${url.origin}/reset?token=${token}`;
+  const res = await pushToParents(env, WHO_VALUES, { title: 'Possums password reset', body: 'Tap to reset your password.', url: link });
+  if (!res.sent) return json({ error: 'Could not deliver the reset link.' }, { status: 502 });
   await env.POSSUMS_KV.put(RESET_TOKEN_KEY, token, { expirationTtl: 3600 });
   await env.POSSUMS_KV.put(RESET_COOLDOWN_KEY, String(Date.now()), { expirationTtl: 86400 });
-  const link = `${url.origin}/reset?token=${token}`;
-  for (const userKey of targets) {
-    const body = new URLSearchParams({
-      token: cfg.app_token, user: userKey,
-      title: 'Possums password reset',
-      message: `Tap to reset your password:\n${link}`,
-      url: link, url_title: 'Reset password', sound: 'classical',
-    });
-    try {
-      await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body });
-    } catch (err) {
-      console.log('pushover reset send failed', err);
-    }
-  }
   return json({ ok: true });
 }
 
@@ -1138,23 +1232,39 @@ async function handleMe(request, env) {
   return json({ who, name: who ? parents[who] : null, parents });
 }
 
-async function handleNotify(request, env) {
+async function handleNotify(request, env, sub) {
+  const who = getWho(request);
   if (request.method === 'GET') {
-    return json(await readNotify(env));
+    const [vapid, subs] = await Promise.all([getVapid(env), readSubs(env)]);
+    return json({
+      publicKey: vapid.publicKey,
+      counts: { parent1: subs.parent1.length, parent2: subs.parent2.length },
+    });
   }
-  if (request.method === 'PUT') {
+  if (request.method === 'POST' && sub === 'subscribe') {
+    if (!who) return json({ error: 'not signed in' }, { status: 401 });
     const b = await readBody(request);
-    if (!b) return badRequest('json required');
-    const next = {
-      app_token: String(b.app_token ?? '').trim(),
-      parent1: String(b.parent1 ?? '').trim(),
-      parent2: String(b.parent2 ?? '').trim(),
-    };
-    if (next.app_token.length > 60 || next.parent1.length > 60 || next.parent2.length > 60) {
-      return badRequest('values must be 60 characters or fewer');
+    const s = b?.subscription;
+    if (!s || typeof s.endpoint !== 'string' || !s.endpoint.startsWith('https://') || !s.keys?.p256dh || !s.keys?.auth) {
+      return badRequest('valid push subscription required');
     }
-    await writeNotify(env, next);
-    return json(next);
+    const subs = await readSubs(env);
+    for (const w of WHO_VALUES) subs[w] = subs[w].filter((x) => x.endpoint !== s.endpoint);
+    subs[who].push({
+      endpoint: s.endpoint,
+      keys: { p256dh: String(s.keys.p256dh), auth: String(s.keys.auth) },
+      subject: new URL(request.url).origin,
+    });
+    await writeSubs(env, subs);
+    return json({ ok: true });
+  }
+  if (request.method === 'POST' && sub === 'unsubscribe') {
+    const b = await readBody(request);
+    if (!b || typeof b.endpoint !== 'string') return badRequest('endpoint required');
+    const subs = await readSubs(env);
+    for (const w of WHO_VALUES) subs[w] = subs[w].filter((x) => x.endpoint !== b.endpoint);
+    await writeSubs(env, subs);
+    return json({ ok: true });
   }
   return new Response('Method not allowed', { status: 405 });
 }
@@ -1163,26 +1273,15 @@ async function handleNotifyTest(request, env, target) {
   if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
   const who = WHO_VALUES.includes(target) ? target : getWho(request);
   if (!who) return json({ error: 'not signed in' }, { status: 401 });
-  const cfg = await readNotify(env);
-  if (!cfg.app_token) return badRequest('app token not configured');
-  const key = cfg[who];
-  if (!key) return badRequest('user key not configured for that parent');
   const parents = await readParents(env);
-  const body = new URLSearchParams({
-    token: cfg.app_token,
-    user: key,
+  const res = await pushToParents(env, [who], {
     title: 'Possums test',
-    message: `Hello ${parents[who]} — Pushover is wired up correctly.`,
-    sound: 'classical',
+    body: `Hello ${parents[who]}, notifications are working.`,
+    url: '/',
   });
-  try {
-    const r = await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body });
-    const text = await r.text();
-    if (!r.ok) return json({ error: `Pushover ${r.status}: ${text}` }, { status: 502 });
-    return json({ ok: true });
-  } catch (err) {
-    return json({ error: String(err) }, { status: 502 });
-  }
+  if (res.sent) return json({ ok: true, sent: res.sent });
+  if (!res.failed) return badRequest('no devices subscribed for that parent');
+  return json({ error: `push failed: ${res.errors[0] || 'unknown error'}` }, { status: 502 });
 }
 
 async function handleExport(request, env, url) {
@@ -1234,7 +1333,7 @@ async function handleApi(request, url, env, ctx) {
   if (parts[1] === 'auth' && parts[2] === 'password') return handleChangePassword(request, env);
   if (parts[1] === 'notify') {
     if (parts[2] === 'test') return handleNotifyTest(request, env, parts[3]);
-    return handleNotify(request, env);
+    return handleNotify(request, env, parts[2]);
   }
   if (parts[1] === 'bottle-timer') return handleBottleTimer(request, env, parts[2], ctx);
   if (simple[parts[1]]) return handleSimple(parts[1], request, url, env, parts[2], ctx);

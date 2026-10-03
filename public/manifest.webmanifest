@@ -1,0 +1,9 @@
+{
+  "name": "Possums",
+  "short_name": "Possums",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fbf7f0",
+  "theme_color": "#fbf7f0",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

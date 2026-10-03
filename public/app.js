@@ -1124,7 +1124,7 @@ views.more = async () => {
   await loadMe();
   const [health, notify, baby] = await Promise.all([
     fetch('/api/health').then((r) => r.json()).catch(() => ({})),
-    fetch('/api/notify').then((r) => r.json()).catch(() => ({ app_token: '', parent1: '', parent2: '' })),
+    fetch('/api/notify').then((r) => r.json()).catch(() => ({ publicKey: '', counts: { parent1: 0, parent2: 0 } })),
     fetch('/api/baby').then((r) => r.json()).catch(() => ({ dob: '', gender: '' })),
   ]);
   const signedAs = me.who ? me.parents[me.who] : 'not signed in';
@@ -1167,25 +1167,20 @@ views.more = async () => {
       <button type="submit" class="btn">Save baby settings</button>
       <p class="form-msg" hidden></p>
     </form>
-    <form class="card stack" id="notify-form">
-      <h2 class="card__title">Pushover notifications</h2>
-      <p class="row__sub">When one parent logs an activity, the other parent gets a Pushover push describing what happened. Create an application at <a href="https://pushover.net/apps/build" target="_blank" rel="noopener">pushover.net/apps/build</a> for the token, then grab each parent's user key from their Pushover dashboard. Leave a key blank to skip that parent.</p>
-      <label>Application API token
-        <input type="text" name="app_token" maxlength="60" placeholder="paste the application token" value="${escapeHtml(notify.app_token || '')}">
-      </label>
-      <label>${escapeHtml(me.parents.parent1)} — Pushover user key
-        <input type="text" name="parent1" maxlength="60" placeholder="user key, blank to disable" value="${escapeHtml(notify.parent1 || '')}">
-      </label>
-      <label>${escapeHtml(me.parents.parent2)} — Pushover user key
-        <input type="text" name="parent2" maxlength="60" placeholder="user key, blank to disable" value="${escapeHtml(notify.parent2 || '')}">
-      </label>
-      <button type="submit" class="btn">Save notifications</button>
+    <div class="card stack" id="notify-form">
+      <h2 class="card__title">Notifications</h2>
+      <p class="row__sub">When one parent logs an activity, the other parent's subscribed devices get a push. Enable it on each parent's own phone while signed in as that parent. On iPhone, add Possums to the Home Screen first (Share, then Add to Home Screen).</p>
+      <p class="row__sub" id="push-status"></p>
       <div class="grid-2">
-        <button type="button" class="btn btn--ghost notify-test" data-who="parent1">Test ${escapeHtml(me.parents.parent1)}</button>
-        <button type="button" class="btn btn--ghost notify-test" data-who="parent2">Test ${escapeHtml(me.parents.parent2)}</button>
+        <button type="button" class="btn" id="push-enable">Enable on this device</button>
+        <button type="button" class="btn btn--ghost" id="push-disable">Disable on this device</button>
+      </div>
+      <div class="grid-2">
+        <button type="button" class="btn btn--ghost notify-test" data-who="parent1">Test ${escapeHtml(me.parents.parent1)} (${notify.counts?.parent1 ?? 0})</button>
+        <button type="button" class="btn btn--ghost notify-test" data-who="parent2">Test ${escapeHtml(me.parents.parent2)} (${notify.counts?.parent2 ?? 0})</button>
       </div>
       <p class="form-msg" hidden></p>
-    </form>
+    </div>
     <form class="card stack" id="password-form">
       <h2 class="card__title">Change password</h2>
       <label>Current password
@@ -1279,38 +1274,72 @@ views.more = async () => {
   });
 
   const notifyForm = wrap.querySelector('#notify-form');
-  notifyForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = new FormData(notifyForm);
-    const msg = notifyForm.querySelector('.form-msg');
-    try {
-      await api.put('/api/notify', {
-        app_token: (fd.get('app_token') || '').toString().trim(),
-        parent1: (fd.get('parent1') || '').toString().trim(),
-        parent2: (fd.get('parent2') || '').toString().trim(),
-      });
-      msg.classList.remove('form-msg--err');
-      msg.textContent = 'Saved.';
-      msg.hidden = false;
-    } catch (err) {
-      msg.classList.add('form-msg--err');
-      msg.textContent = String(err.message || err);
-      msg.hidden = false;
+  const pushMsg = notifyForm.querySelector('.form-msg');
+  const pushStatus = notifyForm.querySelector('#push-status');
+  const pushEnable = notifyForm.querySelector('#push-enable');
+  const pushDisable = notifyForm.querySelector('#push-disable');
+  const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const showPushMsg = (text, isErr) => {
+    pushMsg.hidden = false;
+    pushMsg.classList.toggle('form-msg--err', !!isErr);
+    pushMsg.textContent = text;
+  };
+  const currentSub = async () => {
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    return reg ? reg.pushManager.getSubscription() : null;
+  };
+  const refreshPushStatus = async () => {
+    if (!pushSupported) {
+      pushStatus.textContent = 'This browser does not support push. On iPhone, open Possums from the Home Screen.';
+      pushEnable.disabled = true;
+      pushDisable.disabled = true;
+      return;
     }
+    const sub = await currentSub();
+    pushStatus.textContent = sub ? `This device is subscribed as ${me.parents[me.who] || 'you'}.` : 'This device is not subscribed.';
+    pushEnable.disabled = !!sub;
+    pushDisable.disabled = !sub;
+  };
+  refreshPushStatus();
+  pushEnable.addEventListener('click', async () => {
+    try {
+      if (!me.who) throw new Error('Sign in first.');
+      if ((await Notification.requestPermission()) !== 'granted') throw new Error('Notification permission denied.');
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        const { publicKey } = await fetch('/api/notify').then((r) => r.json());
+        const pad = '='.repeat((4 - (publicKey.length % 4)) % 4);
+        const raw = atob((publicKey + pad).replace(/-/g, '+').replace(/_/g, '/'));
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: Uint8Array.from(raw, (c) => c.charCodeAt(0)),
+        });
+      }
+      await api.post('/api/notify/subscribe', { subscription: sub.toJSON() });
+      showPushMsg('Enabled on this device.');
+      refreshPushStatus();
+    } catch (err) { showPushMsg(String(err.message || err), true); }
+  });
+  pushDisable.addEventListener('click', async () => {
+    try {
+      const sub = await currentSub();
+      if (sub) {
+        await api.post('/api/notify/unsubscribe', { endpoint: sub.endpoint });
+        await sub.unsubscribe();
+      }
+      showPushMsg('Disabled on this device.');
+      refreshPushStatus();
+    } catch (err) { showPushMsg(String(err.message || err), true); }
   });
   notifyForm.querySelectorAll('.notify-test').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const msg = notifyForm.querySelector('.form-msg');
-      msg.hidden = false;
-      msg.classList.remove('form-msg--err');
-      msg.textContent = 'Sending test…';
+      showPushMsg('Sending test…');
       try {
         await api.post(`/api/notify/test/${btn.dataset.who}`, {});
-        msg.textContent = 'Test sent — check Pushover.';
-      } catch (err) {
-        msg.classList.add('form-msg--err');
-        msg.textContent = String(err.message || err);
-      }
+        showPushMsg('Test sent.');
+      } catch (err) { showPushMsg(String(err.message || err), true); }
     });
   });
 
@@ -2875,5 +2904,6 @@ editForms.milestone = (row) => {
 
 /* ---------- bootstrap ---------- */
 
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 tabs.forEach((t) => t.addEventListener('click', () => showTab(t.dataset.tab)));
 loadMe().finally(() => showTab('today'));
